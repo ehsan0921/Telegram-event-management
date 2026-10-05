@@ -25,6 +25,8 @@ The bot runs while this process is running. For continuous availability, run it 
 
 ## Features
 
+- Persistent Create event, My events, and Help buttons. Optional inputs have Skip buttons; names have Use Telegram name; uploads have Finish uploads. Cancel input exits a step, and event pages include navigation and Invite people sharing buttons. Commands remain supported for existing users.
+
 - Guided creation: title, date/time/timezone text, location, description, and up to 10 custom questions.
 - Random invitation links to share with anyone. Guests open the link and press Start.
 - Accept, decline, tentative, or respond later, with editable public RSVP comments.

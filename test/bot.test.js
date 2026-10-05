@@ -81,3 +81,37 @@ test('event data, conversations, and polling offset survive a restart', async ()
     const loaded = await new Store(dir).load(); assert.deepEqual(loaded.data, store.data);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test('button menus complete event creation and RSVP without typed commands', async () => {
+  const f = fixture();
+  await f.msg(1, '/start');
+  assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].text, '🎉 Create event');
+  await f.msg(1, '🎉 Create event');
+  for (const text of ['Button party', 'Saturday, Sydney', 'Park', '⏭ Skip', '⏭ Skip']) await f.msg(1, text);
+  const e = Object.values(f.store.data.events)[0];
+  assert.equal(e.description, ''); assert.deepEqual(e.questions, []);
+  const invite = f.calls.at(-1).reply_markup.inline_keyboard.flat().find(b => b.url);
+  assert.equal(new URL(invite.url).searchParams.get('url'), f.bot.link(e));
+  await f.msg(2, `/start e_${e.id}`); await f.cb(2, `r:${e.id}:yes`);
+  await f.msg(2, '👤 Use Telegram name');
+  assert.ok(f.calls.at(-1).reply_markup.keyboard.flat().some(b => b.request_contact));
+  await f.msg(2, '⏭ Skip'); await f.msg(2, '⏭ Skip');
+  assert.equal(e.guests[2].status, 'yes'); assert.equal(e.guests[2].name, 'User 2');
+  await f.cb(2, `u:${e.id}`); await f.msg(2, undefined, { document: { file_id: 'test' } });
+  await f.msg(2, '✅ Finish uploads'); assert.equal(f.store.data.sessions[2], undefined);
+  await f.msg(2, '📅 My events'); assert.match(f.calls.at(-1).text, /Button party/);
+  await f.cb(2, 'nav:home'); assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].text, '🎉 Create event');
+  await f.msg(2, '🎉 Create event'); await f.msg(2, '✖️ Cancel input');
+  assert.equal(f.store.data.sessions[2], undefined); assert.equal(Object.keys(f.store.data.events).length, 1);
+});
+
+test('answering again replaces old answers and navigation discards unfinished input', async () => {
+  const f = fixture(); const e = await f.create(); await f.msg(2, `/start e_${e.id}`);
+  for (const answer of ['Old answer', 'New answer']) {
+    await f.cb(2, `r:${e.id}:yes`);
+    for (const text of ['👤 Use Telegram name', '⏭ Skip', answer, '⏭ Skip', '⏭ Skip']) await f.msg(2, text);
+  }
+  assert.equal(e.guests[2].answers.length, 2); assert.equal(e.guests[2].answers[0].answer, 'New answer');
+  await f.cb(2, `r:${e.id}:no`); await f.cb(2, `v:${e.id}`);
+  assert.equal(f.store.data.sessions[2], undefined); assert.equal(e.guests[2].status, 'yes');
+});
