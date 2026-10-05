@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Bot } from '../src/bot.js';
 import { Store } from '../src/store.js';
-import { sendDueReminders, setReminder, eventGroup } from '../src/reminders.js';
+import { sendDueReminders, setReminder, eventGroup, applyDefaultReminder } from '../src/reminders.js';
 
 function fixture() {
   const store = { data: { events: {}, sessions: {}, offset: 0 } };
@@ -235,4 +235,28 @@ test('reminders are personal, sent once, rescheduled, and suppressed for cancell
   assert.throws(()=>setReminder(e,2,60,Date.parse(e.startsAt)-1000),/already passed/);
   assert.equal(eventGroup(e,start),'Upcoming events'); assert.equal(eventGroup(e,Date.parse(e.startsAt)+1),'Past events');
   setReminder(e,2,0); assert.equal(e.reminders[2],undefined);
+});
+
+test('creator cancel/delete notify only accepted and tentative guests and delete clears conversations',async()=>{
+  const f=fixture(); const e=await f.create({});
+  for(const [id,status] of [[2,'yes'],[3,'maybe'],[4,'no'],[5,'later']]) e.guests[id]={name:'Guest',status};
+  f.store.data.sessions[2]={event:e.id,step:'upload'};
+  f.calls.length=0; await f.cb(2,`delete-confirm:${e.id}`); assert.ok(f.store.data.events[e.id]);
+  f.calls.length=0; await f.cb(1,`z:${e.id}`);
+  assert.equal(e.cancelled,true); assert.equal(f.store.data.sessions[2],undefined);
+  assert.deepEqual(f.calls.filter(c=>c.chat_id!==1 && c.text?.includes('cancelled by')).map(c=>c.chat_id),[2,3]);
+  f.calls.length=0; await f.cb(1,`delete-confirm:${e.id}`);
+  assert.equal(f.store.data.events[e.id],undefined);
+  assert.deepEqual(f.calls.filter(c=>c.chat_id!==1 && c.text?.includes('deleted by')).map(c=>c.chat_id),[2,3]);
+});
+test('accepted guests receive organiser defaults with 2/3/4-hour options and personal overrides',async()=>{
+  const f=fixture(); const e=await f.create({}); e.startsAt='2099-10-24T07:00:00Z'; e.defaultReminder=180; e.questions=[];
+  await f.msg(2,`/start e_${e.id}`); await f.cb(2,`r:${e.id}:yes`);
+  for(const text of ['Guest','/skip','/skip']) await f.msg(2,text);
+  assert.equal(e.reminders[2].minutes,180); assert.equal(e.reminders[2].source,'default');
+  await f.cb(2,`remind:${e.id}:240`); e.defaultReminder=120; applyDefaultReminder(e,2); assert.equal(e.reminders[2].minutes,240);
+  await f.cb(2,`remind:${e.id}:0`); applyDefaultReminder(e,2); assert.equal(e.reminders[2],undefined);
+  applyDefaultReminder(e,3); assert.equal(e.reminders[3].minutes,120);
+  await f.cb(2,`reminder:${e.id}`); const buttons=f.calls.at(-1).reply_markup.inline_keyboard.flat();
+  for(const n of [120,180,240]) assert.ok(buttons.some(b=>b.callback_data===`remind:${e.id}:${n}`));
 });

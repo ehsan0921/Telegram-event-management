@@ -3,7 +3,7 @@ import { isSuperAdmin, rememberUser, adminOverview } from './admin.js';
 import { schedule, timezone, InputError } from './time.js';
 import { mutateState, BusyError } from './worker-store.js';
 import { randomBytes } from 'node:crypto';
-import { upcoming, eventGroup, setReminder } from './reminders.js';
+import { upcoming, eventGroup, setReminder, reminderOptions } from './reminders.js';
 import { permissions, permissionLabels, can, confirmed, canSeeLocation, responsesClosed, responseCounts } from './permissions.js';
 
 function field(value, label, max, required = false) {
@@ -17,6 +17,10 @@ function parsePermissions(value) {
 }
 function eventSettings(input, event = {}) {
   const result = {};
+  if (input.defaultReminder !== undefined || !event.id) {
+    if (!reminderOptions.includes(input.defaultReminder ?? 0)) throw new InputError('Choose a default reminder option.');
+    result.defaultReminder = input.defaultReminder ?? 0;
+  }
   if (input.permissions !== undefined || !event.id) result.permissions = parsePermissions(input.permissions);
   for (const key of ['requireApproval', 'hideLocation']) {
     if (input[key] !== undefined && typeof input[key] !== 'boolean') throw new InputError('Event options must be checked or unchecked.');
@@ -41,6 +45,7 @@ export function publicEvent(e, id, username) {
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,
     isOwner: e.owner === id, cancelled: e.cancelled, inviteUrl: `https://t.me/${username}?start=e_${e.id}`,
     permissions: permissions(e),
+    defaultReminder: e.defaultReminder || 0,
     group: eventGroup(e), upcoming: upcoming(e), reminder: e.reminders?.[id]?.minutes || 0, hasBanner: !!e.banner,
     requireApproval: e.requireApproval === true, hideLocation: e.hideLocation === true,
     responseDeadline: e.responseDeadline || null, responsesClosed: responsesClosed(e), deadlineDate: e.deadlineDate || '', deadlineTime: e.deadlineTime || '', deadlineTimezone: e.deadlineTimezone || e.timezone || null,
@@ -163,6 +168,14 @@ export async function miniApi(request, env) {
         return { saved: true };
       }
       const match = path.match(/^\/api\/events\/([a-f0-9]{16})\/schedule$/);
+      const endMatch = path.match(/^\/api\/events\/([a-f0-9]{16})\/(cancel|delete)$/);
+      if (endMatch) {
+        const e = data.events[endMatch[1]];
+        if (!e || e.owner !== id) throw new InputError('Only the organiser can cancel or delete this event.');
+        if (input.confirm !== true) throw new InputError('Confirm this action first.');
+        await bot.endEvent(id, e, endMatch[2] === 'delete');
+        return { saved: true };
+      }
       const reminderMatch = path.match(/^\/api\/events\/([a-f0-9]{16})\/reminder$/);
       if (reminderMatch) {
         const e = data.events[reminderMatch[1]];

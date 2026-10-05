@@ -85,10 +85,18 @@ function renderEvents() {
     const actions = element('div', '', 'event-actions'); actions.append(action('Open event in chat ↗', () => openTelegram(e.inviteUrl), 'primary'));
     if (e.isOwner && !e.cancelled) actions.append(action('Invite', () => share(e)));
     if (e.isOwner && !e.cancelled) actions.append(action('Edit event settings', () => setupForm(e)));
+    if (e.isOwner && !e.cancelled) {
+      for (const operation of ['cancel','delete']) actions.append(action(operation === 'cancel' ? 'Cancel event' : 'Delete event', async () => {
+        const text = operation === 'delete' ? `Permanently delete “${e.title}”, including saved responses and media references? Accepted and tentative guests will be notified. Previously sent Telegram copies remain.` : `Cancel “${e.title}”? Accepted and tentative guests will be notified.`;
+        if (!window.confirm(text)) return;
+        try { await api(`events/${e.id}/${operation}`,{confirm:true}); await refresh(); notice(operation === 'delete' ? 'Event deleted. Accepted and tentative guests notified.' : 'Event cancelled. Accepted and tentative guests notified.'); }
+        catch(error) { notice(error.message); }
+      }));
+    }
     if (e.location) actions.append(action('Copy address', async () => { try { await navigator.clipboard.writeText(e.location); notice('✓ Address copied.'); } catch { notice('Select and copy the address shown on the event.'); } }));
     if (e.upcoming) {
       const label = element('label', 'Event reminder'); const select = document.createElement('select'); select.setAttribute('aria-label', `Reminder for ${e.title}`);
-      for (const [minutes,text] of [[0,'Off'],[15,'15 minutes before'],[60,'1 hour before'],[1440,'1 day before']]) { const option = element('option',text); option.value=minutes; option.disabled=minutes > 0 && Date.parse(e.startsAt)-minutes*60000 <= Date.now(); select.append(option); }
+      for (const [minutes,text] of [[0,'Off'],[15,'15 minutes before'],[60,'1 hour before'],[120,'2 hours before'],[180,'3 hours before'],[240,'4 hours before'],[1440,'1 day before']]) { const option = element('option',text); option.value=minutes; option.disabled=minutes > 0 && Date.parse(e.startsAt)-minutes*60000 <= Date.now(); select.append(option); }
       select.value=e.reminder || 0;
       select.onchange=async () => { select.disabled=true; try { const result=await api(`events/${e.id}/reminder`,{minutes:Number(select.value)}); Object.assign(e,result.event); notice(e.reminder ? '🔔 Reminder saved. We’ll message you in Telegram.' : 'Reminder turned off.'); } catch(err) { select.value=e.reminder || 0; notice(err.message); } finally { select.disabled=false; } };
       label.append(select); card.append(label);
@@ -103,6 +111,7 @@ function setupForm(event = null) {
   $('event-details').hidden = scheduleOnly; $('optional-details').hidden = scheduleOnly;
   $('banner-panel').hidden = compactPicker; $('banner-preview').hidden = true;
   $('guest-permissions').hidden = compactPicker;
+  $('default-reminder-panel').hidden = compactPicker; $('default-reminder').value = event?.defaultReminder || 0;
   $('response-deadline').hidden = compactPicker;
   $('clear-draft-deadline').hidden = !deadlinePicker;
   $('require-approval').checked = event?.requireApproval === true;
@@ -206,7 +215,7 @@ $('timezone-form').onsubmit = async event => {
 };
 $('event-form').onsubmit = async event => {
   event.preventDefault(); $('save-event').disabled = true; $('form-error').hidden = true;
-  const payload = { date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
+  const payload = { defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
   try {
     const banner = $('banner').files[0];
     if (!compactPicker && banner && (banner.size > 5 * 1024 * 1024 || !['image/jpeg','image/png','image/webp'].includes(banner.type))) throw new Error('Choose a JPG, PNG, or WebP banner smaller than 5 MB.');

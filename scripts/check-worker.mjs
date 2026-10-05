@@ -122,5 +122,13 @@ try {
   assert.doesNotMatch(JSON.stringify(overview.data),/sessionToken|test-secret|test-banner|query_id/);
   assert.equal((await api('admin/overview',null,456)).status,403);
   assert.equal((await api('admin/overview',{id:123456789},456)).status,403);
+  const disposable=await api('events',{...input,requestId:'dddddddd-dddd-dddd-dddd-dddddddddddd',defaultReminder:240});
+  const disposableId=disposable.data.event.id; assert.equal(disposable.data.event.defaultReminder,240);
+  assert.equal((await api(`events/${disposableId}/cancel`,{confirm:true},456)).status,400);
+  assert.equal((await api(`events/${disposableId}/delete`,{confirm:false})).status,400);
+  assert.equal((await api(`events/${disposableId}/cancel`,{confirm:true})).status,200);
+  assert.equal((await api('bootstrap')).data.events.find(e=>e.id===disposableId).cancelled,true);
+  assert.equal((await api(`events/${disposableId}/delete`,{confirm:true})).status,200);
+  assert.ok(!(await api('bootstrap')).data.events.some(e=>e.id===disposableId));
   console.log('Worker integration passed: authentication, timezone/date conversion, opt-in guest settings, private data, deadlines, approvals/tickets, and chat picker continuation. Telegram mocked.');
 } finally { await mf.dispose(); }

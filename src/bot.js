@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { eventTime } from './time.js';
-import { upcoming, eventGroup, setReminder } from './reminders.js';
+import { upcoming, eventGroup, setReminder, reminderOptions, reminderLabel, applyDefaultReminder } from './reminders.js';
 import { permissions, permissionLabels, can, guests, confirmed, canSeeLocation, responsesClosed, responseCounts } from './permissions.js';
 
 const labels = { yes: '✅ Accepted', no: '❌ Not coming', maybe: '🤔 Tentative', later: '⏳ Respond later' };
@@ -42,7 +42,7 @@ export class Bot {
       [button(`${e.hideLocation || e.requireApproval ? '✅' : '⬜'} Location only after acceptance / approval`, `${prefix}:hideLocation`)]];
   }
   async creationPermissions(id, s) {
-    return this.send(id, `Guest options\nGuests get Accept, Decline, Tentative, and Later until the response deadline. Tap to enable extras, then Create event.\n\nResponse deadline: ${s.draft.responseDeadline || 'No deadline'}`, keyboard(...this.permissionKeyboard(s.draft, `pc:${s.token}`), ...(this.appUrl ? [[this.miniButton('🗓 Set response deadline', `?mode=deadline&session=${s.token}`)]] : []), [button(s.draft.banner ? '🖼 Replace banner' : '🖼 Add banner', `pb:${s.token}`)], [button('🎉 Create event', `pd:${s.token}`)], [button('Cancel', 'nav:home')]));
+    return this.send(id, `Guest options\nGuests get Accept, Decline, Tentative, and Later until the response deadline. Tap to enable extras, then Create event.\n\nResponse deadline: ${s.draft.responseDeadline || 'No deadline'}`, keyboard(...this.permissionKeyboard(s.draft, `pc:${s.token}`), ...(this.appUrl ? [[this.miniButton('🗓 Set response deadline', `?mode=deadline&session=${s.token}`)]] : []), [button('🔔 Default reminder: ' + reminderLabel(s.draft.defaultReminder || 0), `pc:${s.token}:defaultReminder`)], [button(s.draft.banner ? '🖼 Replace banner' : '🖼 Add banner', `pb:${s.token}`)], [button('🎉 Create event', `pd:${s.token}`)], [button('Cancel', 'nav:home')]));
   }
   async pendingInvitations(id) {
     const events = Object.values(this.db.events).filter(e => e.owner !== id && !e.cancelled && e.guests[id]?.status === 'later');
@@ -62,6 +62,7 @@ export class Bot {
       if (e.requireApproval) delete response.ticket; else response.ticket = randomBytes(6).toString('hex').toUpperCase();
     } else { delete response.approval; delete response.ticket; }
     e.guests[id] = response; this.session(id);
+    if (response.status === 'yes') applyDefaultReminder(e, id);
     await this.home(id, response.status === 'yes' && e.requireApproval ? '✅ Your acceptance request is saved. The organiser will send your invitation details and ticket after approving your response.' : '✅ Response saved.');
     await this.send(e.owner, `${e.title}\n${response.name}: ${response.approval === 'pending' ? '⏳ Awaiting approval' : labels[response.status]}${response.comment ? '\nComment: ' + response.comment : ''}`, response.approval === 'pending' ? keyboard([button('✅ Approve', `approve:${e.id}:${id}`), button('❌ Reject', `reject:${e.id}:${id}`)]) : undefined).catch(() => {});
     if (confirmed(e, response) && e.requireApproval) await this.ticket(id, e);
@@ -94,6 +95,7 @@ export class Bot {
     }
     if (this.appUrl && host) rows.push([this.miniButton('📱 View in planner', `?event=${e.id}`)]);
     if (!e.cancelled && host) rows.push([{ text: '📨 Invite people', url: `https://t.me/share/url?url=${encodeURIComponent(this.link(e))}&text=${encodeURIComponent(`You're invited to ${e.title}!`)}` }]);
+    if (host) rows.push([button('Delete event', `delete:${e.id}`)]);
     rows.push([button(menu.events, 'nav:events'), button(menu.home, 'nav:home')]);
     const visibility = can(e, id, 'guestList') ? 'Guest names and RSVP comments can be seen in the guest list.' : 'The organiser has kept the guest list private. Your response and comment are shared with the organiser.';
     const location = canSeeLocation(e, id) ? e.location : e.requireApproval ? 'Shared after organiser approval' : 'Shared after acceptance';
@@ -246,6 +248,17 @@ export class Bot {
   async notify(e, text) {
     for (const uid of Object.keys(e.guests)) if (Number(uid) !== e.owner) await this.send(Number(uid), text).catch(() => {});
   }
+  async endEvent(id, e, remove = false) {
+    if (!e || e.owner !== id) throw new Error('Only the organiser can do that.');
+    const wasCancelled = e.cancelled;
+    e.cancelled = true;
+    if (remove) delete this.db.events[e.id];
+    for (const [uid, session] of Object.entries(this.db.sessions)) if (session.event === e.id) delete this.db.sessions[uid];
+    if (!wasCancelled || remove) for (const [uid, guest] of Object.entries(e.guests)) {
+      if (Number(uid) !== e.owner && ['yes', 'maybe'].includes(guest.status)) await this.home(Number(uid), `🚫 ${e.title} has been ${remove ? 'deleted' : 'cancelled'} by the organiser. The event will no longer take place.`);
+    }
+    await this.home(id, remove ? 'Event deleted. Accepted and tentative guests were notified.' : 'Event cancelled. Accepted and tentative guests were notified.');
+  }
   async callback(q) {
     const id = q.from.id;
     const [action, eid, arg] = (q.data || '').split(':');
@@ -255,6 +268,7 @@ export class Bot {
       const s = this.db.sessions[id];
       if (!s?.draft || s.step !== 'permissions' || s.token !== eid) return this.send(id, 'These creation buttons have expired. Use the latest buttons or start a new event.');
       if (action === 'pb') { s.step = 'banner'; return this.prompt(id, 'Send a photo for your event banner, or tap Skip.'); }
+      if (arg === 'defaultReminder') { const index = reminderOptions.indexOf(s.draft.defaultReminder || 0); s.draft.defaultReminder = reminderOptions[(index + 1) % reminderOptions.length]; }
       if (action === 'pd') return this.finishCreation(id, s);
       if (Object.hasOwn(permissionLabels, arg)) s.draft.permissions[arg] = !s.draft.permissions[arg];
       if (['requireApproval', 'hideLocation'].includes(arg)) s.draft[arg] = !s.draft[arg];
@@ -262,8 +276,8 @@ export class Bot {
     }
     if (action === 'nav' && ['home', 'events', 'new', 'pending'].includes(eid)) return this.handle({ message: { from: q.from, chat: { id, type: 'private' }, text: { home: '/start', events: '/events', new: '/new', pending: '/pending' }[eid] } });
     if (!this.allowed(e, id)) return this.send(id, 'Open a valid invitation link first.');
-    if (e.cancelled) return this.card(id, e);
-    const hostActions = ['h', 'a', 'x', 'z', 'edit', 'rotate', 'remove', 'permissions', 'toggle', 'approve', 'reject', 'banner'];
+    if (e.cancelled && !['delete', 'delete-confirm'].includes(action)) return this.card(id, e);
+    const hostActions = ['h', 'a', 'x', 'z', 'edit', 'rotate', 'remove', 'permissions', 'toggle', 'approve', 'reject', 'banner', 'delete', 'delete-confirm'];
     if (hostActions.includes(action) && e.owner !== id) return this.send(id, 'Only the organiser can do that.');
     const required = { g: 'guestList', u: 'uploadMedia', m: 'viewMedia' }[action];
     if (required && !can(e, id, required)) return this.send(id, 'The organiser has not enabled this option for guests.');
@@ -272,7 +286,7 @@ export class Bot {
     if (action === 'address') { if (!canSeeLocation(e, id)) return this.send(id, 'The address is not available yet.'); return this.send(id, e.location, keyboard([button('Back to event', `v:${eid}`)]), [{ type: 'code', offset: 0, length: e.location.length }]); }
     if (action === 'status') { if (e.owner === id || !e.requireApproval) return this.card(id, e); if (confirmed(e, e.guests[id])) return this.ticket(id, e); return this.send(id, e.guests[id]?.status === 'yes' ? '⏳ Awaiting organiser approval. The organiser will send your invitation details after approving your response.' : 'You have not submitted an acceptance request.', keyboard([button('Back to event', `v:${eid}`)])); }
     if (action === 'change') { if (e.owner === id || responsesClosed(e)) return this.card(id, e); return this.send(id, 'Choose your new response. Your saved response stays unchanged until you finish.', keyboard([button('✅ Accept', `r:${eid}:yes`), button('❌ Decline', `r:${eid}:no`)], [button('🤔 Tentative', `r:${eid}:maybe`), button('⏳ Later', `r:${eid}:later`)], [button('Back to event', `v:${eid}`)])); }
-    if (action === 'reminder') { if (!upcoming(e)) return this.send(id, 'Reminders need an upcoming event with an exact date and timezone.'); const minutes = e.reminders?.[id]?.minutes; return this.send(id, `Event reminder${minutes ? ': ' + minutes + ' minutes before' : ': off'}`, keyboard(...[15,60,1440].map(n => [button(n === 15 ? '15 minutes before' : n === 60 ? '1 hour before' : '1 day before', `remind:${eid}:${n}`)]), [button('Turn off', `remind:${eid}:0`)], [button('Back to event', `v:${eid}`)])); }
+    if (action === 'reminder') { if (!upcoming(e)) return this.send(id, 'Reminders need an upcoming event with an exact date and timezone.'); const minutes = e.reminders?.[id]?.minutes; return this.send(id, `Event reminder${minutes ? ': ' + minutes + ' minutes before' : ': off'}`, keyboard(...reminderOptions.filter(n => n > 0).map(n => [button(reminderLabel(n), `remind:${eid}:${n}`)]), [button('Turn off', `remind:${eid}:0`)], [button('Back to event', `v:${eid}`)])); }
     if (action === 'remind') { try { setReminder(e, id, Number(arg)); return this.send(id, Number(arg) ? '🔔 Reminder saved. You’ll receive a Telegram message before the event.' : 'Reminder turned off.', keyboard([button('Back to event', `v:${eid}`)])); } catch (err) { return this.send(id, err.message); } }
     if (action === 'r' && labels[arg]) {
       if (e.owner === id) { this.session(id); return this.card(id, e); }
@@ -325,7 +339,7 @@ export class Bot {
       return this.send(id, `Media page ${page + 1}`, keyboard(...(nav.length ? [nav] : []), [button('Back to event', `v:${eid}`)]));
     }
     if (action === 'remove') { e.media = e.media.filter(f => f.id !== arg); return this.send(id, 'Removed from the event collection. Previously sent copies remain in Telegram chats.'); }
-    if (action === 'h') return this.send(id, 'Organiser tools', keyboard([button('Private guest responses', `a:${eid}`)], [button('Guest options', `permissions:${eid}`)], [button('Edit title', `edit:${eid}:title`), button('Edit time', `edit:${eid}:when`)], [button('Edit location', `edit:${eid}:location`), button('Edit description', `edit:${eid}:description`)], [button('🖼 Add / replace banner', `banner:${eid}`)], [button('Replace invite link', `rotate:${eid}`)], [button('Cancel event', `x:${eid}`)], [button('Back to event', `v:${eid}`)]));
+    if (action === 'h') return this.send(id, 'Organiser tools', keyboard([button('Private guest responses', `a:${eid}`)], [button('Guest options', `permissions:${eid}`)], [button('Edit title', `edit:${eid}:title`), button('Edit time', `edit:${eid}:when`)], [button('Edit location', `edit:${eid}:location`), button('Edit description', `edit:${eid}:description`)], [button('🖼 Add / replace banner', `banner:${eid}`)], [button('Replace invite link', `rotate:${eid}`)], [button('Cancel event', `x:${eid}`), button('Delete event', `delete:${eid}`)], [button('Back to event', `v:${eid}`)]));
     if (action === 'permissions' || action === 'toggle') {
       e.permissions = permissions(e);
       if (action === 'toggle' && Object.hasOwn(permissionLabels, arg)) e.permissions[arg] = !e.permissions[arg];
@@ -344,7 +358,9 @@ export class Bot {
       for (const s of Object.values(this.db.sessions)) if (s.event === eid) s.event = newId;
       await this.send(id, 'Invite link replaced. The old link no longer works. Existing guests can still open the event with My events.'); return this.card(id, e);
     }
-    if (action === 'x') return this.send(id, 'Cancel this event? Guests will be notified and new responses/uploads will close.', keyboard([button('Yes, cancel event', `z:${eid}`), button('Keep event', `v:${eid}`)]));
-    if (action === 'z') { e.cancelled = true; for (const uid of Object.keys(e.guests)) if (Number(uid) !== e.owner) await this.home(Number(uid), `🚫 ${e.title} has been cancelled by the organiser.`); await this.home(id, 'Event cancelled and removed from My events.'); return this.card(id, e); }
+    if (action === 'delete') return this.send(id, 'Permanently delete this event and its saved responses and media references? Accepted and tentative guests will be notified. Previously sent Telegram messages and files remain in their chats.', keyboard([button('Yes, delete event', `delete-confirm:${eid}`), button('Keep event', `v:${eid}`)]));
+    if (action === 'delete-confirm') return this.endEvent(id, e, true);
+    if (action === 'x') return this.send(id, 'Cancel this event? Accepted and tentative guests will be notified and new responses/uploads will close.', keyboard([button('Yes, cancel event', `z:${eid}`), button('Keep event', `v:${eid}`)]));
+    if (action === 'z') { await this.endEvent(id, e); return this.card(id, e); }
   }
 }
