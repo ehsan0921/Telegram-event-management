@@ -10,7 +10,7 @@ const name = u => [u.first_name, u.last_name].filter(Boolean).join(' ') || u.use
 const clean = (s, max = 1000) => typeof s === 'string' ? s.trim().slice(0, max) : '';
 const menu = { new: '🎉 Create event', events: '📅 My events', help: '❓ Help', home: '🏠 Main menu', cancel: '✖️ Cancel input', skip: '⏭ Skip', done: '✅ Finish uploads', name: '👤 Use Telegram name', app: '📱 Open planner', picker: '🗓 Pick date & time', pending: '⏳ Pending invitations' };
 const reply = (...rows) => ({ keyboard: rows.map(row => row.map(text => typeof text === 'string' ? { text } : text)), resize_keyboard: true, is_persistent: true });
-const homeKeyboard = () => reply([menu.new, menu.events], [menu.pending], [menu.app, menu.help]);
+const homeKeyboard = (pending = false) => reply([menu.new, menu.events], ...(pending ? [[menu.pending]] : []), [menu.app, menu.help]);
 
 export class Bot {
   constructor(store, api, username, appUrl) { this.store = store; this.api = api; this.username = username; this.appUrl = appUrl; this.store.data.preferences ||= {}; }
@@ -28,7 +28,8 @@ export class Bot {
     return reply([menu.cancel]);
   }
   prompt(id, text) { return this.send(id, text, this.inputKeyboard(this.db.sessions[id])); }
-  home(id, text = 'Welcome to XEvents 🎉\nCreate an event or open your events using the buttons below.') { return this.send(id, text, homeKeyboard()); }
+  hasPending(id) { return Object.values(this.db.events).some(e => e.owner !== id && !e.cancelled && e.guests[id]?.status === 'later'); }
+  home(id, text = 'Welcome to XEvents 🎉\nCreate an event or open your events using the buttons below.') { return this.send(id, text, homeKeyboard(this.hasPending(id))); }
   session(id, value) { if (value) this.db.sessions[id] = value; else delete this.db.sessions[id]; }
   link(e) { return `https://t.me/${this.username}?start=e_${e.id}`; }
   miniButton(text, params = '') { return { text, web_app: { url: this.appUrl + params } }; }
@@ -136,6 +137,7 @@ export class Bot {
         const e = this.db.events[match[1]];
         if (!e) return this.send(id, 'This invitation is unavailable. Ask the organiser for a new link.');
         if (!e.cancelled && e.owner !== id && !e.guests[id]) e.guests[id] = { name: name(m.from), status: 'later', comment: '', answers: [], phone: '' };
+        await this.home(id, 'Use the invitation buttons below.');
         return this.card(id, e);
       }
       return this.home(id);
@@ -143,7 +145,7 @@ export class Bot {
     if (command === '/help') { this.session(id); return this.home(id, 'Create an event in the planner or chat, choose guest options, and share its invitation. Organisers don’t RSVP.\n\nGuests get Accept, Decline, Tentative, and Later. Later opens unanswered invitations; find them again under Pending invitations. Accepting guests choose a name, optionally share their own phone number, and answer organiser questions.\n\nGuest lists, uploads, and shared media are available only if the organiser enables them. Comments stay private to the organiser unless the guest list is enabled.\n\nA response deadline closes RSVP changes. If approval is required, the organiser gets Approve/Reject buttons and approved guests receive their location and invitation ticket. Location can also be restricted to accepted guests without approval.\n\nUse Manage for organiser tools and guest options, Planner for dates, deadlines, and invitation instructions, or Cancel input to leave a step.'); }
     if (command === '/events') {
       this.session(id);
-      const events = Object.values(this.db.events).filter(e => this.allowed(e, id));
+      const events = Object.values(this.db.events).filter(e => this.allowed(e, id) && !e.cancelled && (e.owner === id || e.guests[id]?.status !== 'no'));
       if (!events.length) return this.home(id, 'No events yet. Tap Create event or open an invitation.');
       await this.home(id, '📅 Your events — tap Open event below.');
       for (const group of ['Upcoming events', 'Past events', 'Date not set', 'Cancelled events']) {
@@ -158,7 +160,7 @@ export class Bot {
       this.session(id, { step: 'title', draft: {} });
       return this.prompt(id, 'Let’s create your event. What is its name? (up to 100 characters)');
     }
-    if (text.startsWith('/') && command !== '/skip' && command !== '/done') return this.send(id, 'Choose a menu button, or tap Cancel input to leave this step.', current ? this.inputKeyboard(current) : homeKeyboard());
+    if (text.startsWith('/') && command !== '/skip' && command !== '/done') return this.send(id, 'Choose a menu button, or tap Cancel input to leave this step.', current ? this.inputKeyboard(current) : homeKeyboard(this.hasPending(id)));
     const s = this.db.sessions[id];
     if (!s) return this.home(id, 'Choose Create event or My events below.');
     if (s.step === 'banner') {
@@ -303,7 +305,7 @@ export class Bot {
         await this.send(guestId, `✅ The organiser approved your response for ${e.title}.`); await this.ticket(guestId, e);
       } else {
         guest.approval = 'rejected'; guest.status = 'no'; delete guest.ticket;
-        await this.send(guestId, `Your acceptance request for ${e.title} was not approved by the organiser. Contact them if you have questions.`);
+        await this.home(guestId, `Your acceptance request for ${e.title} was not approved by the organiser. Contact them if you have questions.`);
       }
       return this.send(id, `${guest.name}: ${action === 'approve' ? 'approved — invitation ticket sent' : 'request rejected'}.`);
     }
@@ -343,6 +345,6 @@ export class Bot {
       await this.send(id, 'Invite link replaced. The old link no longer works. Existing guests can still open the event with My events.'); return this.card(id, e);
     }
     if (action === 'x') return this.send(id, 'Cancel this event? Guests will be notified and new responses/uploads will close.', keyboard([button('Yes, cancel event', `z:${eid}`), button('Keep event', `v:${eid}`)]));
-    if (action === 'z') { e.cancelled = true; await this.notify(e, `🚫 ${e.title} has been cancelled by the organiser.`); return this.card(id, e); }
+    if (action === 'z') { e.cancelled = true; for (const uid of Object.keys(e.guests)) if (Number(uid) !== e.owner) await this.home(Number(uid), `🚫 ${e.title} has been cancelled by the organiser.`); await this.home(id, 'Event cancelled and removed from My events.'); return this.card(id, e); }
   }
 }

@@ -12,6 +12,7 @@ let adminData = null, adminMode = 'events';
 let bannerPreviewUrl;
 const bannerUrls = new Map();
 const initData = tg?.initData || '';
+document.querySelector('[data-tab="pending"]').hidden = true;
 let zones = [...new Set(['UTC', deviceZone, ...(Intl.supportedValuesOf?.('timeZone') || ['Australia/Sydney', 'Europe/London', 'America/New_York', 'Asia/Tehran'])])].sort();
 tg?.ready(); tg?.expand();
 function theme() { document.body.classList.toggle('dark', tg?.colorScheme === 'dark'); }
@@ -60,7 +61,7 @@ function renderEvents() {
   $('zone-note').textContent = `Your local time · ${selectedZone().replaceAll('_', ' ')}`;
   const list = $('event-list'); list.replaceChildren();
   document.querySelector('.section-heading h2').textContent = listFilter === 'pending' ? 'Pending invitations' : 'Your events';
-  const events = [...state.events].filter(e => listFilter !== 'pending' || (!e.isOwner && !e.cancelled && e.status === 'later')).sort((a, b) => Number(a.cancelled) - Number(b.cancelled) || (a.startsAt || '').localeCompare(b.startsAt || ''));
+  const events = [...state.events].filter(e => !e.cancelled && (e.isOwner || e.status !== 'no') && (listFilter !== 'pending' || (!e.isOwner && e.status === 'later'))).sort((a, b) => (a.startsAt || '').localeCompare(b.startsAt || ''));
   if (!events.length) { const empty = element('div', '', 'empty'); empty.append(element('strong', listFilter === 'pending' ? 'You’re all caught up.' : 'A calendar full of possibilities.'), element('span', listFilter === 'pending' ? 'No unanswered invitations.' : 'Create your first event, or open an invitation in the bot to join one.')); list.append(empty); }
   let lastGroup;
   events.sort((a,b) => ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(a.group) - ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(b.group) || (a.group === 'Past events' ? (b.startsAt || '').localeCompare(a.startsAt || '') : (a.startsAt || '').localeCompare(b.startsAt || '')));
@@ -140,6 +141,9 @@ async function preview() {
 }
 async function refresh() {
   const data = await api('bootstrap'); state = data;
+  const hasPending = data.events.some(e => !e.isOwner && !e.cancelled && e.status === 'later');
+  document.querySelector('[data-tab="pending"]').hidden = !hasPending;
+  if (!hasPending && listFilter === 'pending') go('events');
   $('admin-tab').hidden = !data.user.isSuperAdmin;
   document.querySelector('.bottom-nav').classList.toggle('with-admin', data.user.isSuperAdmin);
   $('greeting').textContent = `LET’S MAKE PLANS, ${data.user.firstName.toUpperCase()}`;
