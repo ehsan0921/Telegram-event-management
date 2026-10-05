@@ -1,0 +1,96 @@
+import { authenticate } from './mini-auth.js';
+import { schedule, timezone, InputError } from './time.js';
+import { mutateState, BusyError } from './worker-store.js';
+import { randomBytes } from 'node:crypto';
+
+function field(value, label, max, required = false) {
+  if (typeof value !== 'string' || value.trim().length > max || (required && !value.trim())) throw new InputError(`${label} ${required ? 'is required and ' : ''}must be at most ${max} characters.`);
+  return value.trim();
+}
+export function publicEvent(e, id, username) {
+  return {
+    id: e.id, title: e.title, when: e.when, location: e.location, description: e.description,
+    startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,
+    isOwner: e.owner === id, cancelled: e.cancelled, inviteUrl: `https://t.me/${username}?start=e_${e.id}`,
+    counts: Object.fromEntries(['yes', 'no', 'maybe', 'later'].map(status => [status, Object.values(e.guests).filter(g => g.status === status).length])),
+    status: e.guests[id]?.status || null
+  };
+}
+
+export async function miniApi(request, env) {
+  const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
+  const respond = (data, status = 200) => Response.json(data, { status, headers });
+  const user = authenticate(request.headers.get('Authorization')?.replace(/^tma /, ''), env.TELEGRAM_BOT_TOKEN);
+  if (!user) return respond({ error: 'Open the planner inside Telegram. If it was open for a while, close and reopen it.' }, 401);
+  const path = new URL(request.url).pathname;
+  if (path === '/api/bootstrap' && request.method === 'GET') {
+    const { results } = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND (json_extract(data,'$.owner')=? OR json_type(data,?) IS NOT NULL)").bind(user.id, `$.guests."${user.id}"`).all();
+    const preference = await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(user.id)).first();
+    const session = await env.DB.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(user.id)).first();
+    const s = session ? JSON.parse(session.data) : null;
+    const pickerSession = s && (s.step === 'when' || (s.step === 'edit' && s.field === 'when')) ? { token: s.token, event: s.event || null } : null;
+    return respond({ user: { firstName: user.first_name || 'Guest' }, preference: preference ? JSON.parse(preference.data) : {}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
+  }
+  if (request.method !== 'POST') return respond({ error: 'Not found' }, 404);
+  const raw = await request.text();
+  if (raw.length > 12000) return respond({ error: 'Too much text.' }, 413);
+  let input;
+  try { input = JSON.parse(raw); if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error(); }
+  catch { return respond({ error: 'Invalid request.' }, 400); }
+  try {
+    if (path === '/api/preview') return respond(schedule(input));
+    const value = await mutateState(env, async (data, bot) => {
+      const id = user.id;
+      if (path === '/api/preferences') {
+        data.preferences[id] = { timezone: timezone(input.timezone) };
+        return { preference: data.preferences[id] };
+      }
+      if (path === '/api/events') {
+        if (!/^[a-f0-9-]{36}$/.test(input.requestId || '')) throw new InputError('Refresh the planner and try again.');
+        const existing = Object.values(data.events).find(e => e.owner === id && e.createRequestId === input.requestId);
+        if (existing) return { event: publicEvent(existing, id, env.BOT_USERNAME) };
+        const title = field(input.title, 'Event name', 100, true);
+        const location = field(input.location, 'Location', 300, true);
+        const description = field(input.description ?? '', 'Description', 1500);
+        const questions = field(input.questions ?? '', 'Questions', 2200).split('\n').map(q => q.trim()).filter(Boolean);
+        if (questions.length > 10 || questions.some(q => q.length > 200)) throw new InputError('Use up to 10 questions, each at most 200 characters.');
+        const e = { ...schedule(input), id: randomBytes(8).toString('hex'), title, location, description, questions, owner: id, guests: {}, media: [], cancelled: false, createdAt: new Date().toISOString(), createRequestId: input.requestId };
+        data.events[e.id] = e;
+        await bot.home(id, '🎉 Your event is ready! Created in your planner.'); await bot.card(id, e);
+        return { event: publicEvent(e, id, env.BOT_USERNAME) };
+      }
+      if (path === '/api/picker') {
+        const s = data.sessions[id];
+        if (!s || !s.token || s.token !== input.sessionToken || !(s.step === 'when' || (s.step === 'edit' && s.field === 'when'))) throw new InputError('This picker has expired. Open a new picker from the current chat step.');
+        const date = schedule(input);
+        if (s.draft && s.step === 'when') {
+          Object.assign(s.draft, date); s.step = 'location'; delete s.token;
+          await bot.prompt(id, '📅 Time saved. Where is the event? Enter an address, meeting point, or online link.');
+        } else {
+          const e = data.events[s.event];
+          if (!e || e.owner !== id || e.cancelled) throw new InputError('Only the organiser can change an active event.');
+          Object.assign(e, date); bot.session(id);
+          await bot.notify(e, `📣 ${e.title}: the organiser updated the date and time. Tap My events for the latest details.`);
+          await bot.home(id, '✅ Event time updated.'); await bot.card(id, e);
+        }
+        return { saved: true };
+      }
+      const match = path.match(/^\/api\/events\/([a-f0-9]{16})\/schedule$/);
+      if (match) {
+        const e = data.events[match[1]];
+        if (!e || e.owner !== id || e.cancelled) throw new InputError('Only the organiser can change an active event.');
+        Object.assign(e, schedule(input));
+        await bot.notify(e, `📣 ${e.title}: the organiser updated the date and time. Tap My events for the latest details.`); await bot.card(id, e);
+        return { event: publicEvent(e, id, env.BOT_USERNAME) };
+      }
+      throw new InputError('Not found');
+    });
+    return respond(value);
+  } catch (e) {
+    if (e instanceof BusyError) return respond({ error: e.message }, 503);
+    // Validation errors are controlled strings; never expose database or fetch errors.
+    if (e instanceof InputError) return respond({ error: e.message }, 400);
+    console.error(JSON.stringify({ event: 'mini_api_failed', path }));
+    return respond({ error: 'Could not save. Please try again.' }, 503);
+  }
+}

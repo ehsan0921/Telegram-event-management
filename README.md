@@ -1,6 +1,6 @@
 # XEvents Telegram bot
 
-A private-chat event planner for @XEvents_bot. Requires Node.js 22 or newer; no packages to install.
+A private-chat event planner and Telegram Mini App for @XEvents_bot. Requires Node.js 22 or newer. Run `npm ci` to install dependencies.
 
 ## Cloudflare deployment
 
@@ -26,6 +26,11 @@ The bot runs while this process is running. For continuous availability, run it 
 ## Features
 
 - Persistent Create event, My events, and Help buttons. Optional inputs have Skip buttons; names have Use Telegram name; uploads have Finish uploads. Cancel input exits a step, and event pages include navigation and Invite people sharing buttons. Commands remain supported for existing users.
+- Telegram Mini App at `/app`, launched through the bot’s Planner menu or Open planner button. Includes mobile date/time controls, searchable IANA timezone selections, event creation, invitation sharing, and organiser date/time editing.
+- Local timezone preferences are detected on first Mini App use and saved to the Telegram account. Users can change them in the Timezone tab. Event timezone and local display timezone are independent; changing a preference never changes an event’s start time.
+- New picker events store an exact UTC instant plus the organiser’s timezone and local date/time. Both the app and chat convert these to the guest’s saved timezone. Older free-text dates remain as entered until the organiser updates them using the picker.
+- Chat creation and time editing support a Pick date & time button. The picker resumes only the matching current conversation; expired picker links cannot overwrite a later input step.
+- Mini App API requests validate Telegram’s signed `initData`, user identity, and one-hour freshness. Event reads and time editing enforce membership/ownership. Create requests are idempotent. Missing or repeated daylight-saving clock times are rejected with an explanation rather than silently shifted.
 
 - Guided creation: title, date/time/timezone text, location, description, and up to 10 custom questions.
 - Random invitation links to share with anyone. Guests open the link and press Start.
@@ -41,7 +46,7 @@ The bot runs while this process is running. For continuous availability, run it 
 
 Telegram hosts uploaded media; the bot stores reusable Telegram file IDs and metadata, not independent downloaded backups. Media and public RSVP comments are visible to anyone who joins using the invitation. Share links with intended guests. Replacing a link blocks the old invitation but retains existing guests. Removing an item hides it from the collection; it cannot remove previously delivered Telegram copies.
 
-The local JSON database contains phone numbers and answers in plain text. Keep the data directory private and back it up securely. `.env` and `data/` are excluded from Git. Dates are displayed as entered, so explicitly include a timezone; automatic reminders and calendar integration are not implemented.
+The local JSON database contains phone numbers and answers in plain text. Keep the data directory private and back it up securely. `.env` and `data/` are excluded from Git. Dates typed as free text are displayed as entered; the Mini App picker supports automatic timezone conversion. Automatic reminders and calendar integration are not implemented.
 
 Custom questions are set during event creation. Notification delivery is best effort if a user blocks the bot. Guests who receive a link but never open it cannot be listed or messaged by the bot.
 

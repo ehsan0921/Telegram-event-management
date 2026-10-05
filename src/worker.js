@@ -1,4 +1,5 @@
-import { Bot } from './bot.js';
+import { mutateState, BusyError } from './worker-store.js';
+import { miniApi } from './mini-api.js';
 
 export async function authorized(request, secret) {
   if (!secret) return false;
@@ -19,38 +20,12 @@ async function telegram(env, method, params) {
 }
 
 export async function processUpdate(env, update) {
-  const owner = crypto.randomUUID();
-  const lock = await env.DB.prepare('INSERT INTO lease (id, owner, expires) VALUES (1, ?, unixepoch()+60) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner, expires=excluded.expires WHERE lease.expires < unixepoch() RETURNING owner').bind(owner).first();
-  if (!lock) return new Response('Busy; retry', { status: 503 });
   try {
-    if (await env.DB.prepare('SELECT id FROM processed WHERE id=?').bind(update.update_id).first()) return new Response('OK');
-    const { results } = await env.DB.prepare('SELECT kind,id,data FROM records').all();
-    const data = { events: {}, sessions: {} };
-    for (const row of results) data[row.kind][row.id] = JSON.parse(row.data);
-    const before = new Map(results.map(r => [`${r.kind}:${r.id}`, r.data]));
-    const messages = [];
-    // Capture outgoing effects, commit the state, then deliver from the durable outbox.
-    const bot = new Bot({ data }, async (method, params) => { messages.push({ method, params }); return {}; }, env.BOT_USERNAME);
-    await bot.handle(update);
-    const batch = [env.DB.prepare('INSERT INTO commits(owner) VALUES (?)').bind(owner)];
-    for (const kind of ['events', 'sessions']) {
-      for (const [id, value] of Object.entries(data[kind])) {
-        const serialized = JSON.stringify(value);
-        if (before.get(`${kind}:${id}`) !== serialized) batch.push(env.DB.prepare('INSERT INTO records(kind,id,data) VALUES (?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data').bind(kind, id, serialized));
-        before.delete(`${kind}:${id}`);
-      }
-    }
-    for (const key of before.keys()) {
-      const [kind, id] = key.split(':');
-      batch.push(env.DB.prepare('DELETE FROM records WHERE kind=? AND id=?').bind(kind, id));
-    }
-    for (const [index, msg] of messages.entries()) batch.push(env.DB.prepare('INSERT INTO outbox(id,method,params) VALUES (?,?,?)').bind(`${update.update_id}:${String(index).padStart(5, '0')}`, msg.method, JSON.stringify(msg.params)));
-    batch.push(env.DB.prepare('INSERT INTO processed(id,at) VALUES (?,unixepoch())').bind(update.update_id));
-    batch.push(env.DB.prepare('DELETE FROM commits WHERE owner=?').bind(owner));
-    await env.DB.batch(batch);
+    await mutateState(env, (data, bot) => bot.handle(update), update.update_id);
     return new Response('OK');
-  } finally {
-    await env.DB.prepare('DELETE FROM lease WHERE owner=?').bind(owner).run();
+  } catch (e) {
+    if (e instanceof BusyError) return new Response('Busy; retry', { status: 503 });
+    throw e;
   }
 }
 
@@ -81,6 +56,24 @@ export async function drainOutbox(env) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/api/')) {
+      try {
+      const response = await miniApi(request, env);
+      if (response.ok && request.method === 'POST') ctx.waitUntil(drainOutbox(env));
+      return response;
+      } catch { return Response.json({ error: 'Could not load the planner. Please try again.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
+    }
+    if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/style.css'].includes(url.pathname))) {
+      const target = new URL(request.url);
+      if (url.pathname === '/app' || url.pathname === '/app/') target.pathname = '/';
+      const asset = await env.ASSETS.fetch(new Request(target, request));
+      const headers = new Headers(asset.headers);
+      headers.set('Cache-Control', 'no-cache');
+      headers.set('X-Content-Type-Options', 'nosniff');
+      headers.set('Referrer-Policy', 'no-referrer');
+      headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'self'; object-src 'none'");
+      return new Response(asset.body, { status: asset.status, headers });
+    }
     if (request.method === 'GET' && url.pathname === '/') return Response.json({ service: 'XEvents', status: 'running' });
     if (url.pathname === '/setup' && request.method === 'POST') {
       if (!await authorized(request, env.TELEGRAM_WEBHOOK_SECRET)) return new Response('Unauthorized', { status: 401 });
@@ -114,7 +107,16 @@ export default {
     }
   },
   async scheduled(controller, env, ctx) {
+    ctx.waitUntil(configureMiniApp(env));
     ctx.waitUntil(drainOutbox(env));
     ctx.waitUntil(env.DB.prepare('DELETE FROM processed WHERE at < unixepoch()-604800').run());
   }
 };
+
+export async function configureMiniApp(env) {
+  if (!env.APP_URL) return;
+  const setting = await env.DB.prepare("SELECT value FROM app_settings WHERE key='mini-menu'").first();
+  if (setting?.value === env.APP_URL) return;
+  const result = await telegram(env, 'setChatMenuButton', { menu_button: { type: 'web_app', text: 'Planner', web_app: { url: env.APP_URL } } });
+  if (result.ok) await env.DB.prepare("INSERT INTO app_settings(key,value) VALUES ('mini-menu',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(env.APP_URL).run();
+}

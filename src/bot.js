@@ -1,22 +1,24 @@
 import { randomBytes } from 'node:crypto';
+import { eventTime } from './time.js';
 
 const labels = { yes: '✅ Coming', no: '❌ Not coming', maybe: '🤔 Tentative', later: '⏳ Respond later' };
 const button = (text, callback_data) => ({ text, callback_data });
 const keyboard = (...rows) => ({ inline_keyboard: rows });
 const name = u => [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || 'Guest';
 const clean = (s, max = 1000) => typeof s === 'string' ? s.trim().slice(0, max) : '';
-const menu = { new: '🎉 Create event', events: '📅 My events', help: '❓ Help', home: '🏠 Main menu', cancel: '✖️ Cancel input', skip: '⏭ Skip', done: '✅ Finish uploads', name: '👤 Use Telegram name' };
+const menu = { new: '🎉 Create event', events: '📅 My events', help: '❓ Help', home: '🏠 Main menu', cancel: '✖️ Cancel input', skip: '⏭ Skip', done: '✅ Finish uploads', name: '👤 Use Telegram name', app: '📱 Open planner', picker: '🗓 Pick date & time' };
 const reply = (...rows) => ({ keyboard: rows.map(row => row.map(text => typeof text === 'string' ? { text } : text)), resize_keyboard: true, is_persistent: true });
-const homeKeyboard = () => reply([menu.new, menu.events], [menu.help]);
+const homeKeyboard = () => reply([menu.new, menu.events], [menu.app, menu.help]);
 
 export class Bot {
-  constructor(store, api, username) { this.store = store; this.api = api; this.username = username; }
+  constructor(store, api, username, appUrl) { this.store = store; this.api = api; this.username = username; this.appUrl = appUrl; this.store.data.preferences ||= {}; }
   get db() { return this.store.data; }
   send(id, text, reply_markup) { return this.api('sendMessage', { chat_id: id, text, ...(reply_markup ? { reply_markup } : {}) }); }
   async long(id, text, markup) {
     for (let i = 0; i < text.length; i += 3900) await this.send(id, text.slice(i, i + 3900), i + 3900 >= text.length ? markup : undefined);
   }
   inputKeyboard(s) {
+    if (this.appUrl && (s.step === 'when' || (s.step === 'edit' && s.field === 'when'))) return reply([menu.picker], [menu.cancel]);
     if (s.step === 'phone') return reply([{ text: '📱 Share my phone number', request_contact: true }], [menu.skip, menu.cancel]);
     if (s.step === 'name') return reply([menu.name], [menu.cancel]);
     if (s.step === 'upload') return reply([menu.done], [menu.cancel]);
@@ -27,6 +29,8 @@ export class Bot {
   home(id, text = 'Welcome to XEvents 🎉\nCreate an event or open your events using the buttons below.') { return this.send(id, text, homeKeyboard()); }
   session(id, value) { if (value) this.db.sessions[id] = value; else delete this.db.sessions[id]; }
   link(e) { return `https://t.me/${this.username}?start=e_${e.id}`; }
+  miniButton(text, params = '') { return { text, web_app: { url: this.appUrl + params } }; }
+  time(e, id) { return eventTime(e, this.db.preferences[id]?.timezone); }
   allowed(e, id) { return e && (e.owner === id || !!e.guests[id]); }
   async card(id, e) {
     const counts = Object.keys(labels).map(s => `${labels[s]}: ${Object.values(e.guests).filter(g => g.status === s).length}`).join('\n');
@@ -37,9 +41,10 @@ export class Bot {
       [button('📎 Add media', `u:${e.id}`), button('🗂 Shared media', `m:${e.id}:0`)]
     ];
     if (e.owner === id && !e.cancelled) rows.push([button('⚙️ Manage', `h:${e.id}`)]);
+    if (this.appUrl) rows.push([this.miniButton('📱 View in planner', `?event=${e.id}`)]);
     if (!e.cancelled) rows.push([{ text: '📨 Invite people', url: `https://t.me/share/url?url=${encodeURIComponent(this.link(e))}&text=${encodeURIComponent(`You're invited to ${e.title}!`)}` }]);
     rows.push([button(menu.events, 'nav:events'), button(menu.home, 'nav:home')]);
-    const text = `🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n\n🗓 ${e.when}\n📍 ${e.location}\n\n${e.description}\n\n${counts}\n\nInvite people:\n${this.link(e)}\n\nNames and RSVP comments are visible to guests. Phone numbers and question answers are shared only with the organiser.`;
+    const text = `🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n\n🗓 ${this.time(e, id)}\n📍 ${e.location}\n\n${e.description}\n\n${counts}\n\nInvite people:\n${this.link(e)}\n\nNames and RSVP comments are visible to guests. Phone numbers and question answers are shared only with the organiser.`;
     for (let i = 0; i < text.length; i += 3900) await this.send(id, text.slice(i, i + 3900), i + 3900 >= text.length ? keyboard(...rows) : undefined);
   }
   async handle(update) {
@@ -50,14 +55,21 @@ export class Bot {
     if (m.chat.type !== 'private') return this.send(m.chat.id, `Please use me in a private chat: https://t.me/${this.username}`);
     let text = clean(m.text, 3000);
     const current = this.db.sessions[id];
-    const navigation = { [menu.new]: '/new', [menu.events]: '/events', [menu.help]: '/help', [menu.home]: '/start', [menu.cancel]: '/cancel' };
+    const navigation = { [menu.new]: '/new', [menu.events]: '/events', [menu.help]: '/help', [menu.home]: '/start', [menu.cancel]: '/cancel', [menu.app]: '/app', [menu.picker]: '/picker' };
     if (navigation[text]) text = navigation[text];
     else if (current && text === menu.name && current.step === 'name') text = '/skip';
     else if (current && text === menu.skip && ['phone', 'description', 'questions', 'question', 'comment'].includes(current.step)) text = '/skip';
     else if (current && text === menu.done && current.step === 'upload') text = '/done';
     const command = text.split(/\s/)[0].split('@')[0];
+    if (command === '/app' && this.appUrl) return this.send(id, 'Open your planner to create events, pick dates and times, and set your local timezone.', keyboard([this.miniButton('📱 Open XEvents planner')]));
+    if (command === '/picker' && this.appUrl) {
+      if (!current || !(current.step === 'when' || (current.step === 'edit' && current.field === 'when'))) return this.home(id, 'Start creating an event or edit an event’s time first.');
+      current.token ||= randomBytes(12).toString('hex');
+      return this.send(id, 'Choose a date, time, and timezone in the picker.', keyboard([this.miniButton(menu.picker, `?mode=picker&session=${current.token}`)]));
+    }
     if (command === '/cancel') { this.session(id); return this.home(id, 'Input cancelled. Choose what you’d like to do next.'); }
     if (command === '/start') {
+      if (this.appUrl) await this.api('setChatMenuButton', { chat_id: id, menu_button: { type: 'web_app', text: 'Planner', web_app: { url: this.appUrl } } });
       this.session(id);
       const match = text.match(/^\/start(?:@\w+)? e_([a-f0-9]{16})$/);
       if (match) {
@@ -74,7 +86,7 @@ export class Bot {
       const events = Object.values(this.db.events).filter(e => this.allowed(e, id));
       if (!events.length) return this.home(id, 'No events yet. Tap Create event or open an invitation.');
       await this.home(id, '📅 Your events — tap Open event below.');
-      for (const e of events) await this.send(id, `${e.cancelled ? '🚫' : '🎉'} ${e.title}\n${e.when}`, keyboard([button('Open event', `v:${e.id}`)]));
+      for (const e of events) await this.send(id, `${e.cancelled ? '🚫' : '🎉'} ${e.title}\n${this.time(e, id)}`, keyboard([button('Open event', `v:${e.id}`)]));
       return;
     }
     if (command === '/new') {
@@ -99,7 +111,9 @@ export class Bot {
       if (e.owner !== id) return;
       const limit = s.field === 'title' ? 100 : s.field === 'description' ? 1500 : 300;
       if (!text || text.length > limit) return this.send(id, `Enter text up to ${limit} characters.`);
-      e[s.field] = text; this.session(id); await this.home(id, '✅ Event updated.'); await this.notify(e, `📣 ${e.title}: the organiser updated ${s.field}. Tap My events for the latest details.`); return this.card(id, e);
+      e[s.field] = text;
+      if (s.field === 'when') { delete e.startsAt; delete e.timezone; delete e.localDate; delete e.localTime; }
+      this.session(id); await this.home(id, '✅ Event updated.'); await this.notify(e, `📣 ${e.title}: the organiser updated ${s.field}. Tap My events for the latest details.`); return this.card(id, e);
     }
     if (s.step === 'name') {
       if (!text || text.length > 100) return this.prompt(id, 'Enter a name up to 100 characters, or tap Use Telegram name.');

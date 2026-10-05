@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#126b5b">
+  <title>XEvents · Your plans, together</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main>
+    <header class="brand"><a href="/app" aria-label="XEvents home"><span class="logo">X</span><span>XEvents<span class="wordmark-note">MAKE TIME FOR YOUR PEOPLE</span></span></a><span class="pill">PLANNER</span></header>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <section id="events-view" class="view">
+      <div class="hero"><span class="eyebrow" id="greeting">GOOD TIMES START HERE</span><h1>Your plans.<br>Your people.</h1><p>A little less organising.<br>A lot more getting together.</p><button class="primary" id="hero-create">＋ Plan something</button><span class="hero-mark" aria-hidden="true">✳</span></div>
+      <div class="section-heading"><h2>Your events</h2><button class="text-button" id="refresh">Refresh</button></div>
+      <p id="zone-note" class="muted"></p>
+      <div id="event-list" aria-live="polite"><div class="empty">Loading your plans…</div></div>
+    </section>
+    <section id="create-view" class="view" hidden>
+      <span class="eyebrow">BRING EVERYONE TOGETHER</span><h1 id="form-title">Make a plan.</h1><p class="muted" id="form-description">Pick a date. Share an invite. Let the good times follow.</p>
+      <form id="event-form">
+        <div id="event-details" class="panel">
+          <label for="title">Event name</label><input id="title" name="title" placeholder="Dinner, a birthday, a weekend adventure…" maxlength="100" required>
+          <label for="location">Where are we meeting?</label><input id="location" name="location" placeholder="Address, meeting point, or online link" maxlength="300" required>
+        </div>
+        <div class="panel schedule-panel"><div class="panel-heading"><span class="calendar-icon" aria-hidden="true">▦</span><div><h2>A time that works.</h2><p class="muted">The timezone belongs to this event.</p></div></div>
+          <div class="date-row"><div><label for="date">Date</label><input type="date" id="date" required min="2020-01-01" max="2100-12-31"></div><div><label for="time">Time</label><input type="time" id="time" required></div></div>
+          <label for="event-zone">Event timezone</label><input id="event-zone-search" type="search" placeholder="Find a city or timezone" aria-label="Filter event timezones" autocomplete="off"><select id="event-zone" required aria-label="Event timezone"></select>
+          <p class="time-preview" id="time-preview" aria-live="polite">Choose a date and time to see the preview.</p>
+          <p class="small muted">Guests see this time in their saved local timezone. Daylight saving is handled automatically.</p>
+        </div>
+        <div id="optional-details" class="panel"><label for="description">A little more about the plan <span>optional</span></label><textarea id="description" rows="3" maxlength="1500" placeholder="What should everyone know?"></textarea>
+          <label for="questions">Questions for your guests <span>optional</span></label><textarea id="questions" rows="3" maxlength="2200" placeholder="Any dietary requirements?&#10;What will you bring?"></textarea><p class="small muted">One question per line, up to 10. Answers stay private to you.</p>
+        </div>
+        <p id="form-error" class="error" role="alert" hidden></p><button class="primary wide" type="submit" id="save-event">Create event & get invite</button><button class="secondary wide" type="button" id="cancel-edit" hidden>Back to events</button>
+      </form>
+      <div id="success" class="panel success" hidden><span class="eyebrow">IT’S A DATE</span><h2 id="success-title">Your event is ready.</h2><p id="success-time"></p><button class="primary wide" id="share-event">Invite your people ↗</button><button class="secondary wide" id="open-chat">Open event in chat</button><button class="text-button wide" id="another-event">Back to my events</button></div>
+    </section>
+    <section id="settings-view" class="view" hidden><span class="eyebrow">ON YOUR TIME</span><h1>Your corner<br>of the world.</h1><p class="muted">Pick your local timezone. Your events will show the time where you are.</p>
+      <form id="timezone-form" class="panel"><label for="local-zone">My timezone</label><input id="local-zone-search" type="search" placeholder="Find a city or timezone" aria-label="Filter local timezones" autocomplete="off"><select id="local-zone" required></select><button class="secondary wide" type="button" id="detect-zone">Use my device timezone</button><p id="device-zone" class="small muted"></p><button class="primary wide" type="submit" id="save-zone">Save timezone</button><p class="small muted">Saved to your Telegram account. Changing this won’t move an event’s actual start time.</p></form>
+      <div class="panel"><h2>Everything stays together.</h2><p class="muted">RSVPs, guest questions, comments, photos, videos, and files are available in your event’s Telegram chat.</p><a class="text-button" href="https://t.me/XEvents_bot">Open XEvents in Telegram ↗</a></div>
+    </section>
+  </main>
+  <nav class="bottom-nav" aria-label="Planner navigation"><button data-tab="events" aria-current="page"><span aria-hidden="true">▦</span>My events</button><button data-tab="create"><span aria-hidden="true">＋</span>Create</button><button data-tab="settings"><span aria-hidden="true">◎</span>Timezone</button></nav>
+</body>
+</html>
