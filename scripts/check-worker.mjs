@@ -130,5 +130,13 @@ try {
   assert.equal((await api('bootstrap')).data.events.find(e=>e.id===disposableId).cancelled,true);
   assert.equal((await api(`events/${disposableId}/delete`,{confirm:true})).status,200);
   assert.ok(!(await api('bootstrap')).data.events.some(e=>e.id===disposableId));
+  const durationMade=await api('events',{...input,requestId:'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',endMode:'duration',durationMinutes:180});
+  assert.equal(durationMade.data.event.endsAt,'2026-10-24T10:00:00Z');
+  const durationPath=`events/${durationMade.data.event.id}/schedule`;
+  const changed=await api(durationPath,{...input,time:'19:00'}); assert.equal(changed.data.event.endsAt,'2026-10-24T11:00:00Z');
+  assert.equal((await api(durationPath,{...input,endMode:'finish',endDate:'2026-10-24',endTime:'17:00'})).status,400);
+  const finished=await api(durationPath,{...input,endMode:'finish',endDate:'2026-10-25',endTime:'01:00'});
+  assert.equal(finished.data.event.endsAt,'2026-10-24T14:00:00Z');
+  assert.equal((await api(durationPath,{...input,endMode:'none'})).data.event.endsAt,null);
   console.log('Worker integration passed: authentication, timezone/date conversion, opt-in guest settings, private data, deadlines, approvals/tickets, and chat picker continuation. Telegram mocked.');
 } finally { await mf.dispose(); }

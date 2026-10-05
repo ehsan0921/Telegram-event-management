@@ -43,6 +43,7 @@ export function publicEvent(e, id, username) {
   return {
     id: e.id, title: e.title, when: e.when, location: canSeeLocation(e, id) ? e.location : null, description: e.description,
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,
+    endsAt: e.endsAt || null, durationMinutes: e.durationMinutes || null, endMode: e.endMode || 'none', endDate: e.endDate || '', endTime: e.endTime || '',
     isOwner: e.owner === id, cancelled: e.cancelled, inviteUrl: `https://t.me/${username}?start=e_${e.id}`,
     permissions: permissions(e),
     defaultReminder: e.defaultReminder || 0,
@@ -153,7 +154,7 @@ export async function miniApi(request, env) {
         } else {
           const e = data.events[s.event];
           if (!e || e.owner !== id || e.cancelled) throw new InputError('Only the organiser can change an active event.');
-          Object.assign(e, date); bot.session(id);
+          Object.assign(e, schedule({ endMode: e.endMode || 'none', durationMinutes: e.durationMinutes, endDate: e.endDate, endTime: e.endTime, ...input })); bot.session(id);
           await bot.notify(e, `📣 ${e.title}: the organiser updated the date and time. Tap My events for the latest details.`);
           await bot.home(id, '✅ Event time updated.'); await bot.card(id, e);
         }
@@ -186,7 +187,7 @@ export async function miniApi(request, env) {
       if (match) {
         const e = data.events[match[1]];
         if (!e || e.owner !== id || e.cancelled) throw new InputError('Only the organiser can change an active event.');
-        Object.assign(e, schedule(input));
+        Object.assign(e, schedule({ endMode: e.endMode || 'none', durationMinutes: e.durationMinutes, endDate: e.endDate, endTime: e.endTime, ...input }));
         Object.assign(e, eventSettings(input, e));
         await bot.notify(e, `📣 ${e.title}: the organiser updated the date and time. Tap My events for the latest details.`); await bot.card(id, e);
         return { event: publicEvent(e, id, env.BOT_USERNAME) };

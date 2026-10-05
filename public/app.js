@@ -51,7 +51,7 @@ function dateInZone(instant, zone) {
 }
 function format(e, zone = selectedZone()) {
   if (!e.startsAt) return e.when + '\nTimezone not set — shown as entered by the organiser.';
-  return new Intl.DateTimeFormat('en-AU', { timeZone: zone, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(e.startsAt)) + ` (${zone})`;
+  return new Intl.DateTimeFormat('en-AU', { timeZone: zone, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(e.startsAt)) + ` (${zone})` + (e.endsAt ? '\nFinishes: ' + format({ startsAt: e.endsAt }, zone) : '');
 }
 function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener'); }
 function share(e) { openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.inviteUrl)}&text=${encodeURIComponent(`You're invited to ${e.title}!`)}`); }
@@ -121,6 +121,12 @@ function renderEvents() {
 function setupForm(event = null) {
   activeEvent = event; createdEvent = null; requestId = crypto.randomUUID();
   $('event-form').reset(); $('event-form').hidden = false; $('success').hidden = true; $('form-error').hidden = true;
+  $('ending-panel').hidden = deadlinePicker;
+  $('end-mode').value = event?.endMode || 'none';
+  $('duration-hours').value = event?.durationMinutes ? Math.floor(event.durationMinutes / 60) : 2;
+  $('duration-minutes').value = event?.durationMinutes ? event.durationMinutes % 60 : 0;
+  $('finish-date').value = event?.endDate || event?.localDate || dateInZone(Date.now(), selectedZone()); $('finish-time').value = event?.endTime || '20:00';
+  updateEnding();
   const scheduleOnly = compactPicker || !!event;
   $('event-details').hidden = scheduleOnly; $('optional-details').hidden = scheduleOnly;
   $('banner-panel').hidden = compactPicker; $('banner-preview').hidden = true;
@@ -147,6 +153,7 @@ function setupForm(event = null) {
   const zone = deadlinePicker ? state.session?.timezone || selectedZone() : event?.timezone || selectedZone(); options('event-zone', zone);
   const tomorrow = new Date(dateInZone(Date.now(), zone) + 'T12:00:00Z'); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
   $('date').value = (deadlinePicker ? state.session?.deadlineDate : event?.localDate) || tomorrow.toISOString().slice(0, 10); $('time').value = (deadlinePicker ? state.session?.deadlineTime : event?.localTime) || '18:00';
+  if (!event?.endDate) $('finish-date').value = $('date').value;
   go('create'); preview();
 }
 let timer;
@@ -154,9 +161,9 @@ async function preview() {
   const seq = ++previewSequence;
   if (!initData) { $('time-preview').textContent = 'Open inside Telegram to preview and save your event time.'; return; }
   try {
-    const result = await api('preview', { date: $('date').value, time: $('time').value, timezone: $('event-zone').value });
+    const result = await api('preview', { ...endingInput(), date: $('date').value, time: $('time').value, timezone: $('event-zone').value });
     if (seq !== previewSequence) return;
-    $('time-preview').textContent = '🗓 ' + result.when; $('time-preview').classList.remove('error');
+    $('time-preview').textContent = '🗓 ' + format(result, $('event-zone').value); $('time-preview').classList.remove('error');
   } catch (e) {
     if (seq !== previewSequence) return;
     $('time-preview').textContent = e.message; $('time-preview').classList.add('error');
@@ -219,6 +226,14 @@ for (const id of ['date', 'time', 'event-zone']) $(id).addEventListener('change'
 for (const [search, select] of [['event-zone-search', 'event-zone'], ['local-zone-search', 'local-zone']]) $(search).oninput = () => options(select, $(select).value, $(search).value);
 $('detect-zone').onclick = () => { $('local-zone-search').value = ''; options('local-zone', deviceZone); };
 function updateDeadline() { for (const id of ['deadline-date', 'deadline-time']) { $(id).disabled = !$('deadline-enabled').checked; $(id).required = $('deadline-enabled').checked; } }
+function endingInput() { return deadlinePicker ? {} : { endMode: $('end-mode').value, durationMinutes: Number($('duration-hours').value)*60 + Number($('duration-minutes').value), endDate: $('finish-date').value, endTime: $('finish-time').value }; }
+function updateEnding() {
+  const mode = $('end-mode').value;
+  $('duration-fields').hidden = mode !== 'duration'; $('finish-fields').hidden = mode !== 'finish';
+  for (const [id, active] of [['duration-hours',mode==='duration'],['duration-minutes',mode==='duration'],['finish-date',mode==='finish'],['finish-time',mode==='finish']]) { $(id).disabled = !active; $(id).required = active; }
+}
+$('end-mode').onchange=()=>{updateEnding();preview();};
+for (const id of ['duration-hours','duration-minutes','finish-date','finish-time']) $(id).onchange=preview;
 $('deadline-enabled').onchange = updateDeadline;
 $('require-approval').onchange = () => { if ($('require-approval').checked) $('hide-location').checked = true; $('hide-location').disabled = $('require-approval').checked; };
 $('clear-draft-deadline').onclick = async () => { try { await api('draft-deadline', { clear: true, sessionToken: query.get('session') }); notice('✓ Response deadline removed. Continue creating your event in chat.'); tg?.close(); } catch (e) { notice(e.message); } };
@@ -229,7 +244,7 @@ $('timezone-form').onsubmit = async event => {
 };
 $('event-form').onsubmit = async event => {
   event.preventDefault(); $('save-event').disabled = true; $('form-error').hidden = true;
-  const payload = { defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
+  const payload = { ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
   try {
     const banner = $('banner').files[0];
     if (!compactPicker && banner && (banner.size > 5 * 1024 * 1024 || !['image/jpeg','image/png','image/webp'].includes(banner.type))) throw new Error('Choose a JPG, PNG, or WebP banner smaller than 5 MB.');

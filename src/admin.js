@@ -26,7 +26,7 @@ export function adminOverview(rows) {
       const u = ensure(uid); if (u) { u.invited.push(e.id); if (g.name && !u.names.includes(g.name)) u.names.push(g.name); }
       return { id: Number(uid), name: g.name || '', status: g.status, approval: g.approval || null, phone: g.phone || '', comment: g.comment || '', answers: g.answers || [] };
     });
-    return { id: e.id, owner: e.owner, title: e.title, when: e.when, startsAt: e.startsAt || null, timezone: e.timezone || null, location: e.location, description: e.description, createdAt: e.createdAt, group: eventGroup(e), cancelled: !!e.cancelled, responseDeadline: e.responseDeadline || null, requireApproval: !!e.requireApproval, hideLocation: !!e.hideLocation, permissions: permissions(e), ticketInfo: e.ticketInfo || '', questions: e.questions || [], counts: responseCounts(e), mediaCount: e.media?.length || 0, hasBanner: !!e.banner, guests };
+    return { id: e.id, owner: e.owner, title: e.title, when: e.when, startsAt: e.startsAt || null, endsAt: e.endsAt || null, durationMinutes: e.durationMinutes || null, timezone: e.timezone || null, location: e.location, description: e.description, createdAt: e.createdAt, group: eventGroup(e), cancelled: !!e.cancelled, responseDeadline: e.responseDeadline || null, requireApproval: !!e.requireApproval, hideLocation: !!e.hideLocation, permissions: permissions(e), ticketInfo: e.ticketInfo || '', questions: e.questions || [], counts: responseCounts(e), mediaCount: e.media?.length || 0, hasBanner: !!e.banner, guests };
   }).sort((a,b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   return { events, users: [...users.values()].sort((a,b) => (b.lastSeen || '').localeCompare(a.lastSeen || '') || a.id-b.id) };
 }

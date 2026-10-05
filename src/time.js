@@ -18,7 +18,22 @@ export function schedule(input) {
   try { local = Temporal.ZonedDateTime.from({ timeZone: zone, year, month, day, hour, minute }, { overflow: 'reject', disambiguation: 'reject' }); }
   catch { throw new InputError('This date or time is invalid, or the clock changes make it missing or repeated. Please choose another time.'); }
   const startsAt = local.toInstant().toString();
-  return { startsAt, timezone: zone, localDate: input.date, localTime: input.time, when: formatInstant(startsAt, zone) };
+  const result = { startsAt, timezone: zone, localDate: input.date, localTime: input.time, when: formatInstant(startsAt, zone) };
+  if (input.endMode !== undefined) {
+    if (!['none', 'duration', 'finish'].includes(input.endMode)) throw new InputError('Choose duration or finish time.');
+    Object.assign(result, { endMode: input.endMode, endsAt: null, durationMinutes: null, endDate: '', endTime: '' });
+    if (input.endMode === 'duration') {
+      if (!Number.isInteger(input.durationMinutes) || input.durationMinutes < 1 || input.durationMinutes > 525600) throw new InputError('Choose a duration between 1 minute and 365 days.');
+      result.durationMinutes = input.durationMinutes;
+      result.endsAt = Temporal.Instant.from(startsAt).add({ minutes: input.durationMinutes }).toString();
+    }
+    if (input.endMode === 'finish') {
+      const finish = schedule({ date: input.endDate, time: input.endTime, timezone: zone });
+      if (Date.parse(finish.startsAt) <= Date.parse(startsAt)) throw new InputError('The finish must be after the event starts.');
+      Object.assign(result, { endsAt: finish.startsAt, durationMinutes: (Date.parse(finish.startsAt) - Date.parse(startsAt)) / 60000, endDate: input.endDate, endTime: input.endTime });
+    }
+  }
+  return result;
 }
 
 export function formatInstant(instant, zone) {
@@ -28,6 +43,6 @@ export function formatInstant(instant, zone) {
 export function eventTime(event, preference) {
   if (!event.startsAt || !event.timezone) return event.when;
   const zone = preference || event.timezone;
-  const local = formatInstant(event.startsAt, zone);
+  const local = formatInstant(event.startsAt, zone) + (event.endsAt ? '\nFinishes: ' + formatInstant(event.endsAt, zone) : '');
   return zone === event.timezone ? local : `${local}\nOrganiser time: ${formatInstant(event.startsAt, event.timezone)}`;
 }

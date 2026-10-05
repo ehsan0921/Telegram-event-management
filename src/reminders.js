@@ -2,7 +2,7 @@ import { InputError } from './time.js';
 export const reminderOptions = [0, 15, 60, 120, 180, 240, 1440];
 export const reminderLabel = minutes => !minutes ? 'Off' : minutes === 15 ? '15 minutes before' : minutes === 1440 ? '1 day before' : `${minutes / 60} hour${minutes === 60 ? '' : 's'} before`;
 export function upcoming(e, now = Date.now()) { return !e.cancelled && Number.isFinite(Date.parse(e.startsAt)) && Date.parse(e.startsAt) > now; }
-export function eventGroup(e, now = Date.now()) { return e.cancelled ? 'Cancelled events' : !Number.isFinite(Date.parse(e.startsAt)) ? 'Date not set' : upcoming(e, now) ? 'Upcoming events' : 'Past events'; }
+export function eventGroup(e, now = Date.now()) { return e.cancelled ? 'Cancelled events' : !Number.isFinite(Date.parse(e.startsAt)) ? 'Date not set' : Date.parse(e.endsAt || e.startsAt) > now ? 'Upcoming events' : 'Past events'; }
 export function setReminder(e, id, minutes, now = Date.now()) {
   if (!reminderOptions.includes(minutes)) throw new InputError('Choose a reminder option.');
   e.reminders ||= {};

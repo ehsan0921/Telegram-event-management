@@ -192,7 +192,7 @@ export class Bot {
       const limit = s.field === 'title' ? 100 : s.field === 'description' ? 1500 : 300;
       if (!text || text.length > limit) return this.send(id, `Enter text up to ${limit} characters.`);
       e[s.field] = text;
-      if (s.field === 'when') { delete e.startsAt; delete e.timezone; delete e.localDate; delete e.localTime; }
+      if (s.field === 'when') { delete e.startsAt; delete e.timezone; delete e.localDate; delete e.localTime; delete e.endsAt; delete e.durationMinutes; delete e.endMode; delete e.endDate; delete e.endTime; }
       this.session(id); await this.home(id, '✅ Event updated.'); await this.notify(e, `📣 ${e.title}: the organiser updated ${s.field}. Tap My events for the latest details.`); return this.card(id, e);
     }
     if (s.step === 'name') {
