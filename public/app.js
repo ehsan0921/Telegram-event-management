@@ -100,32 +100,38 @@ function renderEvents() {
     if (e.counts) card.append(element('div', `${e.counts.yes} coming · ${e.counts.pending || 0} awaiting approval · ${e.counts.maybe} tentative · ${e.counts.no} declined · ${e.counts.later} later`, 'counts'));
     else card.append(element('div', 'Guest list is private to the organiser.', 'counts'));
     const actions = element('div', '', 'event-actions'); actions.append(action('Open event in chat ↗', () => openTelegram(e.inviteUrl), 'primary'));
-    if (e.isOwner && !e.cancelled) actions.append(action('Invite', () => share(e)));
-    if (e.isOwner && !e.cancelled) actions.append(action('Edit event settings', () => setupForm(e)));
+    if (e.isOwner && !e.cancelled) actions.append(action('Edit event', () => setupForm(e)));
+    actions.append(action('Copy link', async () => { try { await navigator.clipboard.writeText(e.inviteUrl); notice('✓ Event link copied.'); } catch { notice('Could not copy the link. Use Share invite under the three-dot menu.'); } }));
+    const more = document.createElement('details'); more.className = 'event-more';
+    const moreToggle = element('summary','⋯'); moreToggle.setAttribute('aria-label',`More options for ${e.title}`);
+    const extraActions = element('div','','event-more-panel'); more.append(moreToggle,extraActions);
+    extraActions.append(action('Share invite', () => share(e)));
     if (e.isOwner || e.permissions.viewMedia) {
-      actions.append(action('🗂 Shared media', () => openGallery(e.id)));
-      if (e.imageCount > 10) card.append(element('p', 'More than 10 images? Try Shared media to browse and download them together.', 'small muted'));
+      extraActions.append(action('🗂 Shared media', () => openGallery(e.id)));
+      if (e.imageCount > 10) extraActions.append(element('p', 'More than 10 images? Try Shared media to browse and download them together.', 'small muted'));
     }
-    if (e.isOwner && e.uploadLink) actions.append(action('Upload link & QR code', () => showQr(e.id)));
+    if (e.isOwner && e.uploadLink) extraActions.append(action('Upload link & QR code', () => showQr(e.id)));
     if (e.isOwner && !e.cancelled) {
-      for (const operation of ['cancel','delete']) actions.append(action(operation === 'cancel' ? 'Cancel event' : 'Delete event', async () => {
+      for (const operation of ['cancel','delete']) extraActions.append(action(operation === 'cancel' ? 'Cancel event' : 'Delete event', async () => {
         const text = operation === 'delete' ? `Permanently delete “${e.title}”, including saved responses and media references? Accepted and tentative guests will be notified. Previously sent Telegram copies remain.` : `Cancel “${e.title}”? Accepted and tentative guests will be notified.`;
         if (!await confirmAction(text, operation)) return;
         try { await api(`events/${e.id}/${operation}`,{confirm:true}); await refresh(); notice(operation === 'delete' ? 'Event deleted. Accepted and tentative guests notified.' : 'Event cancelled. Accepted and tentative guests notified.'); }
         catch(error) { notice(error.message); }
       }));
     }
-    if (e.location) actions.append(action('Copy address', async () => { try { await navigator.clipboard.writeText(e.location); notice('✓ Address copied.'); } catch { notice('Select and copy the address shown on the event.'); } }));
+    if (e.location) extraActions.append(action('Copy address', async () => { try { await navigator.clipboard.writeText(e.location); notice('✓ Address copied.'); } catch { notice('Select and copy the address shown on the event.'); } }));
     if (e.upcoming) {
       const label = element('label', 'Event reminder'); const select = document.createElement('select'); select.setAttribute('aria-label', `Reminder for ${e.title}`);
       for (const [minutes,text] of [[0,'Off'],[15,'15 minutes before'],[60,'1 hour before'],[120,'2 hours before'],[180,'3 hours before'],[240,'4 hours before'],[1440,'1 day before']]) { const option = element('option',text); option.value=minutes; option.disabled=minutes > 0 && Date.parse(e.startsAt)-minutes*60000 <= Date.now(); select.append(option); }
       select.value=e.reminder || 0;
       select.onchange=async () => { select.disabled=true; try { const result=await api(`events/${e.id}/reminder`,{minutes:Number(select.value)}); Object.assign(e,result.event); notice(e.reminder ? '🔔 Reminder saved. We’ll message you in Telegram.' : 'Reminder turned off.'); } catch(err) { select.value=e.reminder || 0; notice(err.message); } finally { select.disabled=false; } };
-      label.append(select); card.append(label);
+      label.append(select); extraActions.append(label);
     }
-    card.append(actions); list.append(card);
+    card.append(actions,more); list.append(card);
   }
 }
+document.addEventListener('click', event => { for (const menu of document.querySelectorAll('.event-more[open]')) if (!menu.contains(event.target) || event.target.closest('button')) menu.open=false; });
+document.addEventListener('keydown', event => { if (event.key==='Escape') for (const menu of document.querySelectorAll('.event-more[open]')) { menu.open=false; menu.querySelector('summary').focus(); } });
 function setupForm(event = null) {
   activeEvent = event; createdEvent = null; requestId = crypto.randomUUID();
   $('event-form').reset(); $('event-form').hidden = false; $('success').hidden = true; $('form-error').hidden = true;
