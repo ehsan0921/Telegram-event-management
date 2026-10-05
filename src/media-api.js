@@ -1,5 +1,5 @@
 import qrcode from 'qrcode-generator';
-import { can, shareUploadLink } from './permissions.js';
+import { can, shareUploadLink, uploadLink } from './permissions.js';
 import { mutateState } from './worker-store.js';
 
 
@@ -11,7 +11,9 @@ export async function mediaApi(request, env, user) {
   const json = (value, status = 200) => Response.json(value, { status, headers });
   const row = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(match[1]).first();
   const e = row && JSON.parse(row.data);
-  if (!e || (e.owner !== user.id && !e.guests[user.id])) return json({ error: 'Open a valid event invitation first.' }, 403);
+  const preference = await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(user.id)).first();
+  const grant = e && preference && JSON.parse(preference.data).mediaAccess?.[e.id] === e.uploadToken && !!uploadLink(e,env.BOT_USERNAME);
+  if (!e || (e.owner !== user.id && !e.guests[user.id] && !grant)) return json({ error: 'Open a valid event or media link first.' }, 403);
   if (match[2] === 'upload-qr') {
     if (request.method !== 'GET' || e.owner !== user.id) return json({ error: 'Only the organiser can view the upload QR code.' }, 403);
     const link = shareUploadLink(e, env.BOT_USERNAME);
@@ -26,7 +28,7 @@ export async function mediaApi(request, env, user) {
   if (match[4] === 'send' && request.method === 'POST') {
     await mutateState(env, async (data, bot) => {
       const current = data.events[e.id];
-      if (!bot.allowed(current, user.id) || !can(current, user.id, 'viewMedia')) throw new Error('Access changed');
+      if (!bot.mediaAllowed(current, user.id) || !can(current, user.id, 'viewMedia')) throw new Error('Access changed');
       const file = current.media.find(item => item.id === f.id); if (!file) throw new Error('File removed');
       await bot.api({ photo: 'sendPhoto', video: 'sendVideo', document: 'sendDocument' }[file.type], { chat_id: user.id, [file.type]: file.fileId, caption: file.caption || undefined });
     });

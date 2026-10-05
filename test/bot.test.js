@@ -271,6 +271,7 @@ test('invites and multi-file uploads avoid extra replies; upload links never add
   assert.equal(e.media.length,3);assert.equal(f.calls.length,0);
   await f.msg(2,'/done');assert.ok(f.calls.some(c=>c.text?.includes('3 saved')));
   await f.msg(99,`/start u_${e.uploadToken}`); assert.equal(e.guests[99],undefined);
+  await f.cb(99,`media-add:${e.id}`);
   f.calls.length=0;await f.msg(99,undefined,{document:{file_id:'document',file_name:'plan.pdf'}});
   assert.equal(e.media.length,4);assert.equal(f.calls.length,0);assert.equal(e.guests[99],undefined);
   e.allowLinkUploads=false;await f.msg(99,undefined,{photo:[{file_id:'blocked'}]});assert.equal(e.media.length,4);
@@ -282,4 +283,17 @@ test('long banner invitations remain one bounded photo caption with full details
   const cards=f.calls.filter(c=>c.method==='sendPhoto' || c.method==='sendMessage');assert.equal(cards.length,1);
   assert.ok(cards[0].caption.length<=1024);assert.ok(cards[0].reply_markup.inline_keyboard.flat().some(b=>b.callback_data===`details:${e.id}`));
   await f.cb(2,`details:${e.id}`);assert.match(f.calls.at(-1).text,/Long description/);
+});
+
+test('media links show only banner/title and media actions without RSVP and revoke outsider access',async()=>{
+  const f=fixture();f.bot.appUrl='https://test/app';const e=await f.create({uploadMedia:true,viewMedia:true,allowLinkUploads:true});e.banner='banner';e.location='PRIVATE ADDRESS';
+  f.calls.length=0;await f.msg(99,`/start u_${e.uploadToken}`);
+  let card=f.calls.at(-1);assert.equal(card.caption,e.title);assert.equal(card.method,'sendPhoto');assert.equal(e.guests[99],undefined);
+  const buttons=card.reply_markup.inline_keyboard.flat();assert.equal(buttons.length,3);
+  assert.ok(buttons.some(b=>b.callback_data===`media-add:${e.id}`));
+  assert.ok(buttons.some(b=>b.text==='🗂 Shared media' && b.web_app));
+  assert.ok(!buttons.some(b=>b.callback_data?.startsWith('r:')));
+  assert.equal(f.bot.mediaAllowed(e,99),true);await f.cb(99,`media-add:${e.id}`);await f.msg(99,undefined,{photo:[{file_id:'one'}]});await f.msg(99,'/done');
+  assert.equal(f.calls.at(-1).caption,e.title);assert.doesNotMatch(f.calls.at(-1).caption,/PRIVATE/);
+  await f.cb(1,`toggle:${e.id}:allowLinkUploads`);assert.equal(f.bot.mediaAllowed(e,99),false);
 });

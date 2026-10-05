@@ -125,7 +125,7 @@ export async function miniApi(request, env) {
     const session = await env.DB.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(user.id)).first();
     const s = session ? JSON.parse(session.data) : null;
     const pickerSession = s && (s.step === 'when' || s.step === 'permissions' || (s.step === 'edit' && s.field === 'when')) ? { token: s.token, event: s.event || null, deadlineDate: s.draft?.deadlineDate || '', deadlineTime: s.draft?.deadlineTime || '', timezone: s.draft?.deadlineTimezone || s.draft?.timezone || null } : null;
-    return respond({ user: { firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user) }, preference: preference ? JSON.parse(preference.data) : {}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
+    return respond({ user: { firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user) }, preference: preference ? { timezone: JSON.parse(preference.data).timezone } : {}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
   }
   if (request.method !== 'POST') return respond({ error: 'Not found' }, 404);
   const raw = await request.text();
@@ -138,8 +138,8 @@ export async function miniApi(request, env) {
     const value = await mutateState(env, async (data, bot) => {
       const id = user.id;
       if (path === '/api/preferences') {
-        data.preferences[id] = { timezone: timezone(input.timezone) };
-        return { preference: data.preferences[id] };
+        data.preferences[id] = { ...data.preferences[id], timezone: timezone(input.timezone) };
+        return { preference: { timezone: data.preferences[id].timezone } };
       }
       if (path === '/api/events') {
         if (!/^[a-f0-9-]{36}$/.test(input.requestId || '')) throw new InputError('Refresh the planner and try again.');

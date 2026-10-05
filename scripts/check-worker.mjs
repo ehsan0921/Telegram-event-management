@@ -144,10 +144,14 @@ try {
   const qr=await api(`events/${galleryId}/upload-qr`);assert.equal(qr.status,200);assert.match(qr.data.image,/^data:image\/gif;base64,/);assert.equal(qr.data.link,galleryMade.data.event.uploadLink);
   assert.equal((await api(`events/${galleryId}/gallery`,null,789)).status,403);
   await message(2000,'/start '+new URL(qr.data.link).searchParams.get('start'),789);
+  await callback(2010,`media-add:${galleryId}`,789);
   await message(2001,undefined,789,{photo:[{file_id:'public-image',file_size:3}]});
   const storedGallery=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(galleryId).first()).data);
   assert.equal(storedGallery.media.length,1);assert.equal(storedGallery.guests[789],undefined);
-  assert.equal((await api(`events/${galleryId}/gallery`,null,789)).status,403);
+  assert.equal((await api(`events/${galleryId}/gallery`,null,789)).status,200);
+  assert.equal((await api('preferences',{timezone:'UTC'},789)).status,200);
+  assert.equal((await api(`events/${galleryId}/gallery`,null,789)).status,200);
+  assert.doesNotMatch(JSON.stringify((await api('bootstrap',null,789)).data.preference),/mediaAccess/);
   await message(2002,`/start e_${galleryId}`,456);
   const gallery=await api(`events/${galleryId}/gallery`,null,456);assert.equal(gallery.status,200);assert.equal(gallery.data.media.length,1);assert.doesNotMatch(JSON.stringify(gallery.data),/public-image|uploadToken/);
   const mediaId=gallery.data.media[0].id;
@@ -157,6 +161,7 @@ try {
   await callback(2003,`toggle:${galleryId}:viewMedia`);
   assert.equal((await api(`events/${galleryId}/gallery`,null,456)).status,403);
   await callback(2004,`toggle:${galleryId}:allowLinkUploads`);
+  assert.equal((await api(`events/${galleryId}/gallery`,null,789)).status,403);
   await message(2005,undefined,789,{photo:[{file_id:'disabled-image'}]});
   assert.equal(JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(galleryId).first()).data).media.length,1);
   console.log('Worker integration passed: authentication, timezone/date conversion, opt-in guest settings, private data, deadlines, approvals/tickets, and chat picker continuation. Telegram mocked.');

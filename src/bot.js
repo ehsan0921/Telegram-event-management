@@ -36,6 +36,16 @@ export class Bot {
   miniButton(text, params = '') { return { text, web_app: { url: this.appUrl + params } }; }
   time(e, id) { return eventTime(e, this.db.preferences[id]?.timezone); }
   allowed(e, id) { return e && (e.owner === id || !!e.guests[id]); }
+  mediaAllowed(e, id) { return e && (this.allowed(e, id) || (this.db.preferences[id]?.mediaAccess?.[e.id] === e.uploadToken && !!uploadLink(e, this.username))); }
+  async mediaCard(id, e) {
+    if (!this.mediaAllowed(e, id) || e.cancelled) return this.home(id, 'This media link is unavailable.');
+    const rows=[];
+    if (can(e,id,'uploadMedia')) rows.push([button('📎 Add media',`media-add:${e.id}`)]);
+    if (this.appUrl && can(e,id,'viewMedia')) rows.push([this.miniButton('🗂 Shared media',`?gallery=${e.id}`)]);
+    rows.push([button(menu.home,'nav:home')]);
+    if (e.banner) return this.api('sendPhoto',{chat_id:id,photo:e.banner,caption:e.title,reply_markup:keyboard(...rows)});
+    return this.send(id,e.title,keyboard(...rows));
+  }
   permissionKeyboard(e, prefix) {
     const settings = permissions(e);
     return [...Object.entries(permissionLabels).map(([key, label]) => [button(`${settings[key] ? '✅' : '⬜'} ${label}`, `${prefix}:${key}`)]),
@@ -88,9 +98,8 @@ export class Bot {
       if (can(e, id, 'guestList')) rows.push([button('👥 Guest list', `g:${e.id}`)]);
       const media = [];
       if (can(e, id, 'uploadMedia')) media.push(button('📎 Add media', `u:${e.id}`));
-      if (can(e, id, 'viewMedia')) media.push(button('🗂 Shared media', `m:${e.id}:0`));
       if (media.length) rows.push(media);
-      if (this.appUrl && can(e, id, 'viewMedia')) rows.push([this.miniButton('🖼 Event gallery', `?gallery=${e.id}`)]);
+      if (this.appUrl && can(e, id, 'viewMedia')) rows.push([this.miniButton('🗂 Shared media', `?gallery=${e.id}`)]);
       if (this.appUrl && host && shareUploadLink(e, this.username)) rows.push([this.miniButton('Upload link & QR code', `?qr=${e.id}`)]);
       if (host) rows.push([button('⚙️ Manage', `h:${e.id}`)]);
       if (!host && accepted && e.requireApproval) rows.push([button('🎟 My status', `status:${e.id}`)]);
@@ -144,9 +153,10 @@ export class Bot {
       const uploadMatch = text.match(/^\/start(?:@\w+)? (u_([a-f0-9]{32})|a_([a-f0-9]{16}))$/);
       if (uploadMatch) {
         const e = uploadMatch[2] ? Object.values(this.db.events).find(e => e.uploadToken === uploadMatch[2] && uploadLink(e, this.username)) : this.db.events[uploadMatch[3]];
-        if (!e || e.cancelled || (!uploadMatch[2] && (!this.allowed(e, id) || !can(e, id, 'uploadMedia')))) return this.home(id, 'This upload link is unavailable.');
-        this.session(id, { step: 'upload', event: e.id, uploadToken: uploadMatch[2] || null, uploads: 0 });
-        return this.prompt(id, `Upload files for ${e.title}. Send photos, videos, or documents, then tap Finish uploads. Uploading does not submit an RSVP.`);
+        if (!e || e.cancelled || (!uploadMatch[2] && (!this.mediaAllowed(e, id) || !can(e, id, 'uploadMedia')))) return this.home(id, 'This upload link is unavailable.');
+        if (uploadMatch[2]) { this.db.preferences[id] ||= {}; this.db.preferences[id].mediaAccess ||= {}; this.db.preferences[id].mediaAccess[e.id] = uploadMatch[2]; }
+        this.session(id, { step: 'media', event: e.id });
+        return this.mediaCard(id,e);
       }
       const bannerMatch = text.match(/^\/start(?:@\w+)? b_([a-f0-9]{16})$/);
       if (bannerMatch) { const event = this.db.events[bannerMatch[1]]; if (event?.owner === id && !event.cancelled) { this.session(id, { step: 'banner', event: event.id }); return this.prompt(id, 'Send a photo for your event banner, or tap Skip.'); } return this.home(id, 'Only the organiser can add a banner.'); }
@@ -197,7 +207,7 @@ export class Bot {
     if (s.response && responsesClosed(e)) { this.session(id); await this.home(id, 'The response deadline has passed.'); return this.card(id, e); }
     if (s.step === 'upload') {
       if ((!s.uploadToken && !can(e, id, 'uploadMedia')) || (s.uploadToken && !linkUploader)) { this.session(id); return this.home(id, 'The organiser has disabled these uploads.'); }
-      if (command === '/done') { this.session(id); await this.home(id, `✅ Uploads finished${s.uploads ? ': ' + s.uploads + ' saved' : ''}.`); if (this.allowed(e, id)) return this.card(id, e); return; }
+      if (command === '/done') { this.session(id); await this.home(id, `✅ Uploads finished${s.uploads ? ': ' + s.uploads + ' saved' : ''}.`); if (s.mediaOnly) return this.mediaCard(id,e); if (this.allowed(e, id)) return this.card(id, e); return; }
       const media = m.photo ? { type: 'photo', file: m.photo.at(-1) } : m.video ? { type: 'video', file: m.video } : m.document ? { type: 'document', file: m.document } : null;
       if (!media) return this.prompt(id, 'Send a photo, video, or file. Tap Finish uploads when finished.');
       e.media.push({ id: randomBytes(6).toString('hex'), type: media.type, fileId: media.file.file_id, size: media.file.file_size || null, filename: media.file.file_name || media.type, caption: clean(m.caption, 700), by: id, name: g?.name || name(m.from), at: new Date().toISOString() });
@@ -293,6 +303,12 @@ export class Bot {
       return this.creationPermissions(id, s);
     }
     if (action === 'nav' && ['home', 'events', 'new', 'pending'].includes(eid)) return this.handle({ message: { from: q.from, chat: { id, type: 'private' }, text: { home: '/start', events: '/events', new: '/new', pending: '/pending' }[eid] } });
+    if (action === 'media-add') {
+      if (!this.mediaAllowed(e,id) || e.cancelled || !can(e,id,'uploadMedia')) return this.home(id,'The organiser has disabled these uploads.');
+      const token=this.db.preferences[id]?.mediaAccess?.[e.id];
+      this.session(id,{step:'upload',event:e.id,mediaOnly:true,uploads:0,uploadToken:token===e.uploadToken ? token : null});
+      return this.prompt(id,'Send photos, videos, or files, then tap Finish uploads.');
+    }
     if (!this.allowed(e, id)) return this.send(id, 'Open a valid invitation link first.');
     if (e.cancelled && !['delete', 'delete-confirm'].includes(action)) return this.card(id, e);
     const hostActions = ['h', 'a', 'x', 'z', 'edit', 'rotate', 'remove', 'permissions', 'toggle', 'approve', 'reject', 'banner', 'delete', 'delete-confirm'];
@@ -344,6 +360,7 @@ export class Bot {
     }
     if (action === 'u') { this.session(id, { event: eid, step: 'upload' }); return this.prompt(id, `Send photos, videos, or files for this event. ${permissions(e).viewMedia ? 'Guests can view the shared collection.' : 'The shared collection is private to the organiser.'} Tap Finish uploads when finished.`); }
     if (action === 'm') {
+      if (this.appUrl) return this.send(id, 'Open Shared media to view, save, or send files to your Telegram chat.', keyboard([this.miniButton('🗂 Shared media', `?gallery=${eid}`)]));
       const page = Number(arg);
       if (!Number.isSafeInteger(page) || page < 0) return;
       if (page === 0 && this.appUrl && e.media.filter(f => f.type === 'photo').length > 10) await this.send(id, 'There are more than 10 images. The event gallery is an easier way to browse and download them.', keyboard([this.miniButton('🖼 Open event gallery', `?gallery=${eid}`)], [button('Continue in chat', `m:${eid}:1`)]));

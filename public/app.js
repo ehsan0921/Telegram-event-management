@@ -102,8 +102,8 @@ function renderEvents() {
     if (e.isOwner && !e.cancelled) actions.append(action('Invite', () => share(e)));
     if (e.isOwner && !e.cancelled) actions.append(action('Edit event settings', () => setupForm(e)));
     if (e.isOwner || e.permissions.viewMedia) {
-      actions.append(action('🖼 Event gallery', () => openGallery(e.id)));
-      if (e.imageCount > 10) card.append(element('p', 'More than 10 images? Try the gallery to browse and download them together.', 'small muted'));
+      actions.append(action('🗂 Shared media', () => openGallery(e.id)));
+      if (e.imageCount > 10) card.append(element('p', 'More than 10 images? Try Shared media to browse and download them together.', 'small muted'));
     }
     if (e.isOwner && e.uploadLink) actions.append(action('Upload link & QR code', () => showQr(e.id)));
     if (e.isOwner && !e.cancelled) {
