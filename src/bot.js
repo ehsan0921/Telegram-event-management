@@ -11,7 +11,7 @@ const name = u => [u.first_name, u.last_name].filter(Boolean).join(' ') || u.use
 const clean = (s, max = 1000) => typeof s === 'string' ? s.trim().slice(0, max) : '';
 const menu = { new: '🎉 Create event', events: '📅 My events', help: '❓ Help', home: '🏠 Main menu', cancel: '✖️ Cancel input', skip: '⏭ Skip', done: '✅ Finish uploads', name: '👤 Use Telegram name', app: '📱 Open planner', picker: '🗓 Pick date & time', pending: '⏳ Pending invitations' };
 const reply = (...rows) => ({ keyboard: rows.map(row => row.map(text => typeof text === 'string' ? { text } : text)), resize_keyboard: true, is_persistent: true });
-const homeKeyboard = (pending = false) => reply([menu.new, menu.events], ...(pending ? [[menu.pending]] : []), [menu.app, menu.help]);
+const homeKeyboard = appUrl => reply([appUrl ? { text: '📱 Open app', web_app: { url: appUrl } } : '📱 Open app', menu.events]);
 
 export class Bot {
   constructor(store, api, username, appUrl) { this.store = store; this.api = api; this.username = username; this.appUrl = appUrl; this.store.data.preferences ||= {}; }
@@ -30,7 +30,7 @@ export class Bot {
   }
   prompt(id, text) { return this.send(id, text, this.inputKeyboard(this.db.sessions[id])); }
   hasPending(id) { return Object.values(this.db.events).some(e => e.owner !== id && !e.cancelled && e.guests[id]?.status === 'later'); }
-  home(id, text = 'Welcome to XEvents 🎉\nCreate an event or open your events using the buttons below.') { return this.send(id, text, homeKeyboard(this.hasPending(id))); }
+  home(id, text = 'Welcome to XEvents 🎉\nOpen the app to create events, or tap My events to see your invitations.') { return this.send(id, text, homeKeyboard(this.appUrl)); }
   session(id, value) { if (value) this.db.sessions[id] = value; else delete this.db.sessions[id]; }
   link(e) { return `https://t.me/${this.username}?start=e_${e.id}`; }
   miniButton(text, params = '') { return { text, web_app: { url: this.appUrl + params } }; }
@@ -135,6 +135,7 @@ export class Bot {
     let text = clean(m.text, 3000);
     const current = this.db.sessions[id];
     const navigation = { [menu.new]: '/new', [menu.events]: '/events', [menu.help]: '/help', [menu.home]: '/start', [menu.cancel]: '/cancel', [menu.app]: '/app', [menu.picker]: '/picker', [menu.pending]: '/pending' };
+    if (text === '📱 Open app') text = '/app';
     if (navigation[text]) text = navigation[text];
     else if (current && text === menu.name && current.step === 'name') text = '/skip';
     else if (current && text === menu.skip && ['phone', 'description', 'questions', 'question', 'comment', 'banner'].includes(current.step)) text = '/skip';
@@ -174,7 +175,7 @@ export class Bot {
     if (command === '/events') {
       this.session(id);
       const events = Object.values(this.db.events).filter(e => this.allowed(e, id) && !e.cancelled && (e.owner === id || e.guests[id]?.status !== 'no'));
-      if (!events.length) return this.home(id, 'No events yet. Tap Create event or open an invitation.');
+      if (!events.length) return this.home(id, 'No events yet. Tap Open app to create an event, or open an invitation.');
       await this.home(id, '📅 Your events — tap Open event below.');
       for (const group of ['Upcoming events', 'Past events', 'Date not set', 'Cancelled events']) {
         const entries = events.filter(e => eventGroup(e) === group).sort((a,b) => group === 'Past events' ? Date.parse(b.startsAt)-Date.parse(a.startsAt) : Date.parse(a.startsAt)-Date.parse(b.startsAt));
@@ -188,9 +189,9 @@ export class Bot {
       this.session(id, { step: 'title', draft: {} });
       return this.prompt(id, 'Let’s create your event. What is its name? (up to 100 characters)');
     }
-    if (text.startsWith('/') && command !== '/skip' && command !== '/done') return this.send(id, 'Choose a menu button, or tap Cancel input to leave this step.', current ? this.inputKeyboard(current) : homeKeyboard(this.hasPending(id)));
+    if (text.startsWith('/') && command !== '/skip' && command !== '/done') return this.send(id, 'Choose a menu button, or tap Cancel input to leave this step.', current ? this.inputKeyboard(current) : homeKeyboard(this.appUrl));
     const s = this.db.sessions[id];
-    if (!s) return this.home(id, 'Choose Create event or My events below.');
+    if (!s) return this.home(id, 'Choose Open app or My events below.');
     if (s.step === 'banner') {
       const target = s.draft || this.db.events[s.event];
       if (!target || (!s.draft && (target.owner !== id || target.cancelled))) { this.session(id); return this.home(id, 'This event is unavailable.'); }

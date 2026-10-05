@@ -89,7 +89,7 @@ test('event data, conversations, and polling offset survive a restart', async ()
 test('button menus complete event creation and RSVP without typed commands', async () => {
   const f = fixture();
   await f.msg(1, '/start');
-  assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].text, '🎉 Create event');
+  assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].text, '📱 Open app');
   await f.msg(1, '🎉 Create event');
   for (const text of ['Button party', 'Saturday, Sydney', 'Park', '⏭ Skip', '⏭ Skip']) await f.msg(1, text);
   const token = f.store.data.sessions[1].token;
@@ -106,7 +106,7 @@ test('button menus complete event creation and RSVP without typed commands', asy
   await f.cb(2, `u:${e.id}`); await f.msg(2, undefined, { document: { file_id: 'test' } });
   await f.msg(2, '✅ Finish uploads'); assert.equal(f.store.data.sessions[2], undefined);
   await f.msg(2, '📅 My events'); assert.match(f.calls.at(-1).text, /Button party/);
-  await f.cb(2, 'nav:home'); assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].text, '🎉 Create event');
+  await f.cb(2, 'nav:home'); assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].text, '📱 Open app');
   await f.msg(2, '🎉 Create event'); await f.msg(2, '✖️ Cancel input');
   assert.equal(f.store.data.sessions[2], undefined); assert.equal(Object.keys(f.store.data.events).length, 1);
 });
