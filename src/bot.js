@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { eventTime } from './time.js';
+import { uploadLink, shareUploadLink } from './permissions.js';
 import { upcoming, eventGroup, setReminder, reminderOptions, reminderLabel, applyDefaultReminder } from './reminders.js';
 import { permissions, permissionLabels, can, guests, confirmed, canSeeLocation, responsesClosed, responseCounts } from './permissions.js';
 
@@ -39,7 +40,8 @@ export class Bot {
     const settings = permissions(e);
     return [...Object.entries(permissionLabels).map(([key, label]) => [button(`${settings[key] ? '✅' : '⬜'} ${label}`, `${prefix}:${key}`)]),
       [button(`${e.requireApproval ? '✅' : '⬜'} Organiser approval required`, `${prefix}:requireApproval`)],
-      [button(`${e.hideLocation || e.requireApproval ? '✅' : '⬜'} Location only after acceptance / approval`, `${prefix}:hideLocation`)]];
+      [button(`${e.hideLocation || e.requireApproval ? '✅' : '⬜'} Location only after acceptance / approval`, `${prefix}:hideLocation`)],
+      [button(`${e.allowLinkUploads ? '✅' : '⬜'} Anyone with upload link can send files`, `${prefix}:allowLinkUploads`)]];
   }
   async creationPermissions(id, s) {
     return this.send(id, `Guest options\nGuests get Accept, Decline, Tentative, and Later until the response deadline. Tap to enable extras, then Create event.\n\nResponse deadline: ${s.draft.responseDeadline || 'No deadline'}`, keyboard(...this.permissionKeyboard(s.draft, `pc:${s.token}`), ...(this.appUrl ? [[this.miniButton('🗓 Set response deadline', `?mode=deadline&session=${s.token}`)]] : []), [button('🔔 Default reminder: ' + reminderLabel(s.draft.defaultReminder || 0), `pc:${s.token}:defaultReminder`)], [button(s.draft.banner ? '🖼 Replace banner' : '🖼 Add banner', `pb:${s.token}`)], [button('🎉 Create event', `pd:${s.token}`)], [button('Cancel', 'nav:home')]));
@@ -72,7 +74,7 @@ export class Bot {
     const e = { ...s.draft, permissions: permissions(s.draft), id: randomBytes(8).toString('hex'), owner: id, guests: {}, media: [], cancelled: false, createdAt: new Date().toISOString() };
     this.db.events[e.id] = e; this.session(id); await this.home(id, '🎉 Your event is ready! Tap Invite people below to share it.'); return this.card(id, e);
   }
-  async card(id, e) {
+  async card(id, e, withBanner = true) {
     const host = e.owner === id;
     const counted = responseCounts(e);
     const counts = can(e, id, 'guestList') ? [...Object.keys(labels).map(s => `${labels[s]}: ${counted[s]}`), ...(counted.pending ? [`⏳ Awaiting approval: ${counted.pending}`] : [])].join('\n') : `Your response: ${e.guests[id]?.status === 'yes' && !confirmed(e, e.guests[id]) ? 'Awaiting organiser approval' : labels[e.guests[id]?.status] || 'Not submitted'}`;
@@ -88,6 +90,8 @@ export class Bot {
       if (can(e, id, 'uploadMedia')) media.push(button('📎 Add media', `u:${e.id}`));
       if (can(e, id, 'viewMedia')) media.push(button('🗂 Shared media', `m:${e.id}:0`));
       if (media.length) rows.push(media);
+      if (this.appUrl && can(e, id, 'viewMedia')) rows.push([this.miniButton('🖼 Event gallery', `?gallery=${e.id}`)]);
+      if (this.appUrl && host && shareUploadLink(e, this.username)) rows.push([this.miniButton('Upload link & QR code', `?qr=${e.id}`)]);
       if (host) rows.push([button('⚙️ Manage', `h:${e.id}`)]);
       if (!host && accepted && e.requireApproval) rows.push([button('🎟 My status', `status:${e.id}`)]);
       if (upcoming(e)) rows.push([button('🔔 Event reminder', `reminder:${e.id}`)]);
@@ -100,7 +104,12 @@ export class Bot {
     const visibility = can(e, id, 'guestList') ? 'Guest names and RSVP comments can be seen in the guest list.' : 'The organiser has kept the guest list private. Your response and comment are shared with the organiser.';
     const location = canSeeLocation(e, id) ? e.location : e.requireApproval ? 'Shared after organiser approval' : 'Shared after acceptance';
     const text = `🎉 ${e.title}${e.cancelled ? ' — CANCELLED' : ''}\n\n🗓 ${this.time(e, id)}\n📍 ${location}\n\n${e.description}\n\n${host ? 'You’re the organiser — no RSVP needed.\n\n' : accepted ? '✅ Accepted\n\n' : ''}${closed ? '⏰ Responses closed — deadline passed.\n\n' : ''}${e.responseDeadline ? 'Response deadline: ' + eventTime({ startsAt: e.responseDeadline, timezone: e.deadlineTimezone || e.timezone || 'UTC' }, this.db.preferences[id]?.timezone) + '\n\n' : ''}${counts}${host ? '\n\nInvite people:\n' + this.link(e) : ''}\n\n${visibility} Phone numbers and question answers are shared only with the organiser.`;
-    if (e.banner) await this.api('sendPhoto', { chat_id: id, photo: e.banner, caption: e.title });
+    if (e.banner && withBanner) {
+      const caption = text.length <= 1024 ? text : text.slice(0, 940).replace(/[\uD800-\uDBFF]$/, '') + '\n\nTap Full details to read more.';
+      if (text.length > 1024) rows.unshift([button('Full details', `details:${e.id}`)]);
+      const offset = canSeeLocation(e, id) ? caption.indexOf('📍 ' + e.location) : -1;
+      return this.api('sendPhoto', { chat_id: id, photo: e.banner, caption, reply_markup: keyboard(...rows), ...(offset >= 0 && offset + 3 + e.location.length <= caption.length ? { caption_entities: [{ type: 'code', offset: offset + 3, length: e.location.length }] } : {}) });
+    }
     for (let i = 0; i < text.length; i += 3900) {
       const chunk = text.slice(i, i + 3900);
       const offset = canSeeLocation(e, id) ? chunk.indexOf('📍 ' + e.location) : -1;
@@ -132,6 +141,13 @@ export class Bot {
     if (command === '/start') {
       if (this.appUrl) await this.api('setChatMenuButton', { chat_id: id, menu_button: { type: 'web_app', text: 'Planner', web_app: { url: this.appUrl } } });
       this.session(id);
+      const uploadMatch = text.match(/^\/start(?:@\w+)? (u_([a-f0-9]{32})|a_([a-f0-9]{16}))$/);
+      if (uploadMatch) {
+        const e = uploadMatch[2] ? Object.values(this.db.events).find(e => e.uploadToken === uploadMatch[2] && uploadLink(e, this.username)) : this.db.events[uploadMatch[3]];
+        if (!e || e.cancelled || (!uploadMatch[2] && (!this.allowed(e, id) || !can(e, id, 'uploadMedia')))) return this.home(id, 'This upload link is unavailable.');
+        this.session(id, { step: 'upload', event: e.id, uploadToken: uploadMatch[2] || null, uploads: 0 });
+        return this.prompt(id, `Upload files for ${e.title}. Send photos, videos, or documents, then tap Finish uploads. Uploading does not submit an RSVP.`);
+      }
       const bannerMatch = text.match(/^\/start(?:@\w+)? b_([a-f0-9]{16})$/);
       if (bannerMatch) { const event = this.db.events[bannerMatch[1]]; if (event?.owner === id && !event.cancelled) { this.session(id, { step: 'banner', event: event.id }); return this.prompt(id, 'Send a photo for your event banner, or tap Skip.'); } return this.home(id, 'Only the organiser can add a banner.'); }
       const match = text.match(/^\/start(?:@\w+)? e_([a-f0-9]{16})$/);
@@ -139,7 +155,6 @@ export class Bot {
         const e = this.db.events[match[1]];
         if (!e) return this.send(id, 'This invitation is unavailable. Ask the organiser for a new link.');
         if (!e.cancelled && e.owner !== id && !e.guests[id]) e.guests[id] = { name: name(m.from), status: 'later', comment: '', answers: [], phone: '' };
-        await this.home(id, 'Use the invitation buttons below.');
         return this.card(id, e);
       }
       return this.home(id);
@@ -175,17 +190,19 @@ export class Bot {
     }
     if (s.draft) return this.create(id, text, s);
     const e = this.db.events[s.event];
-    if (!this.allowed(e, id) || e.cancelled) { this.session(id); return this.send(id, 'This event is no longer available for changes.'); }
+    const linkUploader = s.step === 'upload' && e && s.uploadToken && s.uploadToken === e.uploadToken && !!uploadLink(e, this.username);
+    if ((!this.allowed(e, id) && !linkUploader) || e.cancelled) { this.session(id); return this.send(id, 'This event is no longer available for changes.'); }
     const g = e.guests[id];
     if (s.response && e.owner === id) { this.session(id); return this.card(id, e); }
     if (s.response && responsesClosed(e)) { this.session(id); await this.home(id, 'The response deadline has passed.'); return this.card(id, e); }
     if (s.step === 'upload') {
-      if (!can(e, id, 'uploadMedia')) { this.session(id); await this.home(id, 'The organiser has disabled guest uploads.'); return this.card(id, e); }
-      if (command === '/done') { this.session(id); await this.home(id, '✅ Uploads finished.'); return this.card(id, e); }
+      if ((!s.uploadToken && !can(e, id, 'uploadMedia')) || (s.uploadToken && !linkUploader)) { this.session(id); return this.home(id, 'The organiser has disabled these uploads.'); }
+      if (command === '/done') { this.session(id); await this.home(id, `✅ Uploads finished${s.uploads ? ': ' + s.uploads + ' saved' : ''}.`); if (this.allowed(e, id)) return this.card(id, e); return; }
       const media = m.photo ? { type: 'photo', file: m.photo.at(-1) } : m.video ? { type: 'video', file: m.video } : m.document ? { type: 'document', file: m.document } : null;
       if (!media) return this.prompt(id, 'Send a photo, video, or file. Tap Finish uploads when finished.');
-      e.media.push({ id: randomBytes(6).toString('hex'), type: media.type, fileId: media.file.file_id, filename: media.file.file_name || media.type, caption: clean(m.caption, 700), by: id, name: g?.name || name(m.from), at: new Date().toISOString() });
-      return this.prompt(id, '📎 Saved to the event. Send more, or tap Finish uploads.');
+      e.media.push({ id: randomBytes(6).toString('hex'), type: media.type, fileId: media.file.file_id, size: media.file.file_size || null, filename: media.file.file_name || media.type, caption: clean(m.caption, 700), by: id, name: g?.name || name(m.from), at: new Date().toISOString() });
+      s.uploads = (s.uploads || 0) + 1;
+      return;
     }
     if (s.step === 'edit') {
       if (e.owner !== id) return;
@@ -272,6 +289,7 @@ export class Bot {
       if (action === 'pd') return this.finishCreation(id, s);
       if (Object.hasOwn(permissionLabels, arg)) s.draft.permissions[arg] = !s.draft.permissions[arg];
       if (['requireApproval', 'hideLocation'].includes(arg)) s.draft[arg] = !s.draft[arg];
+      if (arg === 'allowLinkUploads') { s.draft.allowLinkUploads = !s.draft.allowLinkUploads; s.draft.uploadToken = s.draft.allowLinkUploads ? randomBytes(16).toString('hex') : null; }
       return this.creationPermissions(id, s);
     }
     if (action === 'nav' && ['home', 'events', 'new', 'pending'].includes(eid)) return this.handle({ message: { from: q.from, chat: { id, type: 'private' }, text: { home: '/start', events: '/events', new: '/new', pending: '/pending' }[eid] } });
@@ -282,6 +300,7 @@ export class Bot {
     const required = { g: 'guestList', u: 'uploadMedia', m: 'viewMedia' }[action];
     if (required && !can(e, id, required)) return this.send(id, 'The organiser has not enabled this option for guests.');
     if (action === 'v') { this.session(id); await this.home(id, 'Use the event buttons below.'); return this.card(id, e); }
+    if (action === 'details') return this.card(id, e, false);
     if (action === 'banner') { this.session(id, { step: 'banner', event: eid }); return this.prompt(id, 'Send a photo for your event banner, or tap Skip.'); }
     if (action === 'address') { if (!canSeeLocation(e, id)) return this.send(id, 'The address is not available yet.'); return this.send(id, e.location, keyboard([button('Back to event', `v:${eid}`)]), [{ type: 'code', offset: 0, length: e.location.length }]); }
     if (action === 'status') { if (e.owner === id || !e.requireApproval) return this.card(id, e); if (confirmed(e, e.guests[id])) return this.ticket(id, e); return this.send(id, e.guests[id]?.status === 'yes' ? '⏳ Awaiting organiser approval. The organiser will send your invitation details after approving your response.' : 'You have not submitted an acceptance request.', keyboard([button('Back to event', `v:${eid}`)])); }
@@ -327,6 +346,7 @@ export class Bot {
     if (action === 'm') {
       const page = Number(arg);
       if (!Number.isSafeInteger(page) || page < 0) return;
+      if (page === 0 && this.appUrl && e.media.filter(f => f.type === 'photo').length > 10) await this.send(id, 'There are more than 10 images. The event gallery is an easier way to browse and download them.', keyboard([this.miniButton('🖼 Open event gallery', `?gallery=${eid}`)], [button('Continue in chat', `m:${eid}:1`)]));
       const media = e.media.slice(page * 5, page * 5 + 5);
       if (!media.length) return this.send(id, 'No shared media on this page yet.', keyboard(...(can(e, id, 'uploadMedia') ? [[button('📎 Add media', `u:${eid}`)]] : []), [button('Back to event', `v:${eid}`)]));
       for (const f of media) {
@@ -344,6 +364,7 @@ export class Bot {
       e.permissions = permissions(e);
       if (action === 'toggle' && Object.hasOwn(permissionLabels, arg)) e.permissions[arg] = !e.permissions[arg];
       if (action === 'toggle' && ['requireApproval', 'hideLocation'].includes(arg)) e[arg] = !e[arg];
+      if (action === 'toggle' && arg === 'allowLinkUploads') { e.allowLinkUploads = !e.allowLinkUploads; e.uploadToken = e.allowLinkUploads ? randomBytes(16).toString('hex') : null; }
       return this.send(id, 'Guest options — tap to enable or disable. Changes apply immediately to guests, including old buttons.', keyboard(...this.permissionKeyboard(e, `toggle:${eid}`), ...(this.appUrl ? [[this.miniButton('🗓 Deadline & invitation details', `?event=${eid}`)]] : []), [button('Back to organiser tools', `h:${eid}`)]));
     }
     if (action === 'a') {

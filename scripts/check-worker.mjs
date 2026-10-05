@@ -22,8 +22,8 @@ try {
   await db.exec(await readFile('migrations/0003_mini_app.sql', 'utf8'));
   assert.equal((await mf.dispatchFetch('https://test/')).status, 200);
   assert.equal((await mf.dispatchFetch('https://test/telegram', { method: 'POST', body: '{}' })).status, 401);
-  async function message(update_id, text, uid = 123) {
-    const body = { update_id, message: { from: { id: uid, first_name: 'Tester' }, chat: { id: uid, type: 'private' }, text } };
+  async function message(update_id, text, uid = 123, extra = {}) {
+    const body = { update_id, message: { from: { id: uid, first_name: 'Tester' }, chat: { id: uid, type: 'private' }, text, ...extra } };
     const response = await mf.dispatchFetch('https://test/telegram', { method: 'POST', headers: { 'X-Telegram-Bot-Api-Secret-Token': 'test-secret' }, body: JSON.stringify(body) });
     assert.equal(response.status, 200, await response.text());
   }
@@ -138,5 +138,26 @@ try {
   const finished=await api(durationPath,{...input,endMode:'finish',endDate:'2026-10-25',endTime:'01:00'});
   assert.equal(finished.data.event.endsAt,'2026-10-24T14:00:00Z');
   assert.equal((await api(durationPath,{...input,endMode:'none'})).data.event.endsAt,null);
+  const galleryMade=await api('events',{...input,requestId:'ffffffff-ffff-ffff-ffff-ffffffffffff',allowLinkUploads:true,permissions:{uploadMedia:true,viewMedia:true}});
+  const galleryId=galleryMade.data.event.id;
+  assert.match(galleryMade.data.event.uploadLink,/https:\/\/t.me\/XEvents_bot\?start=u_[a-f0-9]{32}/);
+  const qr=await api(`events/${galleryId}/upload-qr`);assert.equal(qr.status,200);assert.match(qr.data.image,/^data:image\/gif;base64,/);assert.equal(qr.data.link,galleryMade.data.event.uploadLink);
+  assert.equal((await api(`events/${galleryId}/gallery`,null,789)).status,403);
+  await message(2000,'/start '+new URL(qr.data.link).searchParams.get('start'),789);
+  await message(2001,undefined,789,{photo:[{file_id:'public-image',file_size:3}]});
+  const storedGallery=JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(galleryId).first()).data);
+  assert.equal(storedGallery.media.length,1);assert.equal(storedGallery.guests[789],undefined);
+  assert.equal((await api(`events/${galleryId}/gallery`,null,789)).status,403);
+  await message(2002,`/start e_${galleryId}`,456);
+  const gallery=await api(`events/${galleryId}/gallery`,null,456);assert.equal(gallery.status,200);assert.equal(gallery.data.media.length,1);assert.doesNotMatch(JSON.stringify(gallery.data),/public-image|uploadToken/);
+  const mediaId=gallery.data.media[0].id;
+  const file=await mf.dispatchFetch(`https://test/api/events/${galleryId}/media/${mediaId}`,{headers:{Authorization:'tma '+initData(456)}});assert.equal(file.status,200);
+  assert.equal((await api(`events/${galleryId}/media/${mediaId}/send`,{},456)).status,200);
+  assert.equal((await api(`events/${galleryId}/upload-qr`,null,456)).status,403);
+  await callback(2003,`toggle:${galleryId}:viewMedia`);
+  assert.equal((await api(`events/${galleryId}/gallery`,null,456)).status,403);
+  await callback(2004,`toggle:${galleryId}:allowLinkUploads`);
+  await message(2005,undefined,789,{photo:[{file_id:'disabled-image'}]});
+  assert.equal(JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(galleryId).first()).data).media.length,1);
   console.log('Worker integration passed: authentication, timezone/date conversion, opt-in guest settings, private data, deadlines, approvals/tickets, and chat picker continuation. Telegram mocked.');
 } finally { await mf.dispose(); }

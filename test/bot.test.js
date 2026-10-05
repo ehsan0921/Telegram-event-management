@@ -213,7 +213,8 @@ test('banners persist from creation, are owner-controlled, and addresses are cop
   await f.msg(2,`/start e_${e.id}`); await f.cb(2,`banner:${e.id}`); assert.equal(f.store.data.sessions[2],undefined);
   await f.bot.card(2,e); const card=f.calls.at(-1);
   assert.equal(card.reply_markup.inline_keyboard.flat().find(b=>b.copy_text).copy_text.text,'My house');
-  const entity=card.entities[0]; assert.equal(card.text.slice(entity.offset,entity.offset+entity.length),'My house');
+  assert.equal(card.method,'sendPhoto');
+  const entity=card.caption_entities[0]; assert.equal(card.caption.slice(entity.offset,entity.offset+entity.length),'My house');
   e.location='A'.repeat(300); await f.bot.card(2,e);
   assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data===`address:${e.id}`));
   await f.cb(2,`address:${e.id}`); assert.equal(f.calls.at(-1).entities[0].length,300);
@@ -259,4 +260,26 @@ test('accepted guests receive organiser defaults with 2/3/4-hour options and per
   applyDefaultReminder(e,3); assert.equal(e.reminders[3].minutes,120);
   await f.cb(2,`reminder:${e.id}`); const buttons=f.calls.at(-1).reply_markup.inline_keyboard.flat();
   for(const n of [120,180,240]) assert.ok(buttons.some(b=>b.callback_data===`remind:${e.id}:${n}`));
+});
+
+test('invites and multi-file uploads avoid extra replies; upload links never add guests',async()=>{
+  const f=fixture(); const e=await f.create({uploadMedia:true,allowLinkUploads:true});
+  f.calls.length=0;await f.msg(2,`/start e_${e.id}`);
+  assert.ok(!f.calls.some(c=>c.text==='Use the invitation buttons below.'));
+  await f.cb(2,`u:${e.id}`);f.calls.length=0;
+  for(let i=0;i<3;i++)await f.msg(2,undefined,{photo:[{file_id:'photo'+i}],media_group_id:'album'});
+  assert.equal(e.media.length,3);assert.equal(f.calls.length,0);
+  await f.msg(2,'/done');assert.ok(f.calls.some(c=>c.text?.includes('3 saved')));
+  await f.msg(99,`/start u_${e.uploadToken}`); assert.equal(e.guests[99],undefined);
+  f.calls.length=0;await f.msg(99,undefined,{document:{file_id:'document',file_name:'plan.pdf'}});
+  assert.equal(e.media.length,4);assert.equal(f.calls.length,0);assert.equal(e.guests[99],undefined);
+  e.allowLinkUploads=false;await f.msg(99,undefined,{photo:[{file_id:'blocked'}]});assert.equal(e.media.length,4);
+});
+
+test('long banner invitations remain one bounded photo caption with full details available',async()=>{
+  const f=fixture();const e=await f.create({});e.banner='banner';e.description='Long description '.repeat(90);
+  f.calls.length=0;await f.msg(2,`/start e_${e.id}`);
+  const cards=f.calls.filter(c=>c.method==='sendPhoto' || c.method==='sendMessage');assert.equal(cards.length,1);
+  assert.ok(cards[0].caption.length<=1024);assert.ok(cards[0].reply_markup.inline_keyboard.flat().some(b=>b.callback_data===`details:${e.id}`));
+  await f.cb(2,`details:${e.id}`);assert.match(f.calls.at(-1).text,/Long description/);
 });

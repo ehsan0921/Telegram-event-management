@@ -1,4 +1,6 @@
 import { authenticate } from './mini-auth.js';
+import { mediaApi } from './media-api.js';
+import { shareUploadLink } from './permissions.js';
 import { isSuperAdmin, rememberUser, adminOverview } from './admin.js';
 import { schedule, timezone, InputError } from './time.js';
 import { mutateState, BusyError } from './worker-store.js';
@@ -20,6 +22,11 @@ function eventSettings(input, event = {}) {
   if (input.defaultReminder !== undefined || !event.id) {
     if (!reminderOptions.includes(input.defaultReminder ?? 0)) throw new InputError('Choose a default reminder option.');
     result.defaultReminder = input.defaultReminder ?? 0;
+  }
+  if (input.allowLinkUploads !== undefined || !event.id) {
+    if (input.allowLinkUploads !== undefined && typeof input.allowLinkUploads !== 'boolean') throw new InputError('Uploads by link must be checked or unchecked.');
+    result.allowLinkUploads = input.allowLinkUploads === true;
+    result.uploadToken = result.allowLinkUploads ? event.uploadToken || randomBytes(16).toString('hex') : null;
   }
   if (input.permissions !== undefined || !event.id) result.permissions = parsePermissions(input.permissions);
   for (const key of ['requireApproval', 'hideLocation']) {
@@ -47,6 +54,9 @@ export function publicEvent(e, id, username) {
     isOwner: e.owner === id, cancelled: e.cancelled, inviteUrl: `https://t.me/${username}?start=e_${e.id}`,
     permissions: permissions(e),
     defaultReminder: e.defaultReminder || 0,
+    mediaCount: can(e, id, 'viewMedia') ? e.media?.length || 0 : null,
+    imageCount: can(e, id, 'viewMedia') ? e.media?.filter(f => f.type === 'photo').length || 0 : null,
+    ...(e.owner === id ? { allowLinkUploads: !!e.allowLinkUploads, uploadLink: shareUploadLink(e, username) } : {}),
     group: eventGroup(e), upcoming: upcoming(e), reminder: e.reminders?.[id]?.minutes || 0, hasBanner: !!e.banner,
     requireApproval: e.requireApproval === true, hideLocation: e.hideLocation === true,
     responseDeadline: e.responseDeadline || null, responsesClosed: responsesClosed(e), deadlineDate: e.deadlineDate || '', deadlineTime: e.deadlineTime || '', deadlineTimezone: e.deadlineTimezone || e.timezone || null,
@@ -64,6 +74,8 @@ export async function miniApi(request, env) {
   const user = authenticate(request.headers.get('Authorization')?.replace(/^tma /, ''), env.TELEGRAM_BOT_TOKEN);
   if (!user) return respond({ error: 'Open the planner inside Telegram. If it was open for a while, close and reopen it.' }, 401);
   const path = new URL(request.url).pathname;
+  const mediaResponse = await mediaApi(request, env, user);
+  if (mediaResponse) return mediaResponse;
   if (path.startsWith('/api/admin')) {
     if (!isSuperAdmin(user)) return respond({ error: 'Super admin access required.' }, 403);
     if (path !== '/api/admin/overview' || request.method !== 'GET') return respond({ error: 'Not found.' }, 404);

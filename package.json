@@ -17,6 +17,7 @@
     "wrangler": "^4.147.0"
   },
   "dependencies": {
-    "@js-temporal/polyfill": "^0.5.1"
+    "@js-temporal/polyfill": "^0.5.1",
+    "qrcode-generator": "^2.0.4"
   }
 }

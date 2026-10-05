@@ -67,7 +67,7 @@ export default {
       return response;
       } catch { return Response.json({ error: 'Could not load the planner. Please try again.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
     }
-    if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/style.css'].includes(url.pathname))) {
+    if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/gallery.js', '/style.css'].includes(url.pathname))) {
       const target = new URL(request.url);
       if (url.pathname === '/app' || url.pathname === '/app/') target.pathname = '/';
       const asset = await env.ASSETS.fetch(new Request(target, request));
@@ -75,7 +75,7 @@ export default {
       headers.set('Cache-Control', 'no-cache');
       headers.set('X-Content-Type-Options', 'nosniff');
       headers.set('Referrer-Policy', 'no-referrer');
-      headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; base-uri 'self'; object-src 'none'");
+      headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; base-uri 'self'; object-src 'none'");
       return new Response(asset.body, { status: asset.status, headers });
     }
     if (request.method === 'GET' && url.pathname === '/') return Response.json({ service: 'XEvents', status: 'running' });
