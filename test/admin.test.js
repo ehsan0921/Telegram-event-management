@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { adminOverview, isSuperAdmin } from '../src/admin.js';
 
 test('super admin is identified by verified numeric Telegram ID only',()=>{
-  assert.equal(isSuperAdmin({id:123456789}),true);
-  for(const user of [{id:'123456789'},{id:1,isSuperAdmin:true},{id:1,username:'123456789'},null]) assert.equal(isSuperAdmin(user),false);
+  assert.equal(isSuperAdmin({id:999001}),false);
+  assert.equal(isSuperAdmin({id:999001}, {SUPER_ADMIN_ID: '999001'}),true);
+  for(const user of [{id:'999001'},{id:1,isSuperAdmin:true},{id:1,username:'999001'},null]) assert.equal(isSuperAdmin(user, {SUPER_ADMIN_ID: '999001'}),false);
 });
 test('admin user directory includes legacy owners, guests, preferences and conversation-only users',()=>{
   const rows=[

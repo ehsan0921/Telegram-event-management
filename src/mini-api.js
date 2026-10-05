@@ -91,7 +91,7 @@ export async function miniApi(request, env) {
   const mediaResponse = await mediaApi(request, env, user);
   if (mediaResponse) return mediaResponse;
   if (path.startsWith('/api/admin')) {
-    if (!isSuperAdmin(user)) return respond({ error: 'Super admin access required.' }, 403);
+    if (!isSuperAdmin(user, env)) return respond({ error: 'Super admin access required.' }, 403);
     if (path !== '/api/admin/overview' || request.method !== 'GET') return respond({ error: 'Not found.' }, 404);
     await rememberUser(env, user);
     const { results } = await env.DB.prepare("SELECT kind,id,data FROM records WHERE kind IN ('events','users','preferences','sessions')").all();
@@ -139,7 +139,7 @@ export async function miniApi(request, env) {
     const session = await env.DB.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(user.id)).first();
     const s = session ? JSON.parse(session.data) : null;
     const pickerSession = s && (s.step === 'when' || s.step === 'permissions' || (s.step === 'edit' && s.field === 'when')) ? { token: s.token, event: s.event || null, deadlineDate: s.draft?.deadlineDate || '', deadlineTime: s.draft?.deadlineTime || '', timezone: s.draft?.deadlineTimezone || s.draft?.timezone || null } : null;
-    return respond({ user: { firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user) }, preference: preference ? { timezone: JSON.parse(preference.data).timezone } : {}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
+    return respond({ user: { firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: preference ? { timezone: JSON.parse(preference.data).timezone } : {}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
   }
   if (request.method !== 'POST') return respond({ error: 'Not found' }, 404);
   const raw = await request.text();

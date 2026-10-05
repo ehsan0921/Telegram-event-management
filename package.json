@@ -19,5 +19,11 @@
   "dependencies": {
     "@js-temporal/polyfill": "^0.5.1",
     "qrcode-generator": "^2.0.4"
+  },
+  "license": "MIT",
+  "description": "Free open source Telegram event management, RSVP invitations and shared event media.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ehsan0921/XEvents.git"
   }
 }

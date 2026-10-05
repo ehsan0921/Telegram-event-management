@@ -1,8 +1,12 @@
 import { eventGroup } from './reminders.js';
 import { permissions, responseCounts } from './permissions.js';
 
-export const SUPER_ADMIN_ID = 123456789;
-export const isSuperAdmin = user => user?.id === SUPER_ADMIN_ID;
+export const isSuperAdmin = (user, env = {}) => {
+  const configured = String(env.SUPER_ADMIN_ID || '');
+  if (!/^[1-9]\d*$/.test(configured)) return false;
+  const id = Number(configured);
+  return Number.isSafeInteger(id) && Number.isSafeInteger(user?.id) && user.id === id;
+};
 
 export async function rememberUser(env, user) {
   if (!Number.isSafeInteger(user?.id) || user.is_bot) return;
