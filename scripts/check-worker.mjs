@@ -164,5 +164,15 @@ try {
   assert.equal((await api(`events/${galleryId}/gallery`,null,789)).status,403);
   await message(2005,undefined,789,{photo:[{file_id:'disabled-image'}]});
   assert.equal(JSON.parse((await db.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(galleryId).first()).data).media.length,1);
+  const publicInput={...input,date:'2099-10-24',title:'Explore Sydney',isPublic:true,location:'EXPLORE PRIVATE LOCATION',requireApproval:true,ticketInfo:'EXPLORE PRIVATE TICKET',requestId:'11111111-1111-1111-1111-111111111111'};
+  const publicEvent=await api('events',publicInput);assert.equal(publicEvent.status,200);assert.equal(publicEvent.data.event.isPublic,true);
+  const publicId=publicEvent.data.event.id;
+  const privateEvent=await api('events',{...publicInput,title:'PRIVATE TITLE',isPublic:false,requestId:'22222222-2222-2222-2222-222222222222'});assert.equal(privateEvent.status,200);
+  const otherZone=await api('events',{...publicInput,timezone:'Europe/London',title:'Explore London',requestId:'33333333-3333-3333-3333-333333333333'});assert.equal(otherZone.status,200);
+  const explore=await api('explore?timezone=Australia%2FSydney',null,789);assert.equal(explore.status,200);assert.ok(explore.data.events.some(e=>e.id===publicId));
+  assert.doesNotMatch(JSON.stringify(explore.data),/PRIVATE TITLE|EXPLORE PRIVATE|Explore London|ticketInfo|uploadToken|guests/);
+  assert.equal((await api('explore?timezone=Invalid')).status,400);
+  await api(`events/${publicId}/schedule`,{...publicInput,isPublic:false});assert.ok(!(await api('explore?timezone=Australia%2FSydney')).data.events.some(e=>e.id===publicId));
+  await api(`events/${publicId}/schedule`,{...publicInput,isPublic:true});await api(`events/${publicId}/cancel`,{confirm:true});assert.ok(!(await api('explore?timezone=Australia%2FSydney')).data.events.some(e=>e.id===publicId));
   console.log('Worker integration passed: authentication, timezone/date conversion, opt-in guest settings, private data, deadlines, approvals/tickets, and chat picker continuation. Telegram mocked.');
 } finally { await mf.dispose(); }

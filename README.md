@@ -25,6 +25,8 @@ The bot runs while this process is running. For continuous availability, run it 
 
 ## Features
 
+- Explore in the Mini App footer lists upcoming/ongoing public events whose event timezone matches the user’s saved IANA timezone. Creators can choose Public or Private during creation and editing in the app or chat guest options. Existing events default to private. Public listings expose title, description, banner and times, with invitation links; private locations, tickets, guest responses and media access retain their existing permission checks. Cancelled or finished events are excluded, and events need an exact picker start to be discoverable.
+
 - Super admin Telegram ID `123456789` gets an Admin tab in the Mini App with searchable lists of all events and users, event settings and guest responses. Access is read-only and checked against Telegram’s verified signed identity on every admin request. User profiles are remembered from private bot interactions and Mini App visits; legacy users are inferred from stored events, preferences and conversations. People who have never used the bot cannot be discovered by Telegram ID alone.
 
 - Persistent Create event, My events, and Help buttons. Optional inputs have Skip buttons; names have Use Telegram name; uploads have Finish uploads. Cancel input exits a step, and event pages include navigation and Invite people sharing buttons. Commands remain supported for existing users.

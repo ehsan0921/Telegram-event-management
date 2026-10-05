@@ -19,6 +19,10 @@ function parsePermissions(value) {
 }
 function eventSettings(input, event = {}) {
   const result = {};
+  if (input.isPublic !== undefined || !event.id) {
+    if (input.isPublic !== undefined && typeof input.isPublic !== 'boolean') throw new InputError('Choose public or private visibility.');
+    result.isPublic = input.isPublic === true;
+  }
   if (input.defaultReminder !== undefined || !event.id) {
     if (!reminderOptions.includes(input.defaultReminder ?? 0)) throw new InputError('Choose a default reminder option.');
     result.defaultReminder = input.defaultReminder ?? 0;
@@ -53,6 +57,7 @@ export function publicEvent(e, id, username) {
     endsAt: e.endsAt || null, durationMinutes: e.durationMinutes || null, endMode: e.endMode || 'none', endDate: e.endDate || '', endTime: e.endTime || '',
     isOwner: e.owner === id, cancelled: e.cancelled, inviteUrl: `https://t.me/${username}?start=e_${e.id}`,
     permissions: permissions(e),
+    isPublic: e.isPublic === true,
     defaultReminder: e.defaultReminder || 0,
     mediaCount: can(e, id, 'viewMedia') ? e.media?.length || 0 : null,
     imageCount: can(e, id, 'viewMedia') ? e.media?.filter(f => f.type === 'photo').length || 0 : null,
@@ -74,6 +79,15 @@ export async function miniApi(request, env) {
   const user = authenticate(request.headers.get('Authorization')?.replace(/^tma /, ''), env.TELEGRAM_BOT_TOKEN);
   if (!user) return respond({ error: 'Open the planner inside Telegram. If it was open for a while, close and reopen it.' }, 401);
   const path = new URL(request.url).pathname;
+  if (path === '/api/explore' && request.method === 'GET') {
+    const preference = await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(user.id)).first();
+    let zone;
+    try { zone = timezone(new URL(request.url).searchParams.get('timezone') || (preference && JSON.parse(preference.data).timezone) || 'UTC'); }
+    catch(error) { return respond({error:error.message},400); }
+    const { results } = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND json_extract(data,'$.isPublic')=1 AND json_extract(data,'$.timezone')=?").bind(zone).all();
+    const events = results.map(r => JSON.parse(r.data)).filter(e => !e.cancelled && Date.parse(e.endsAt || e.startsAt) > Date.now()).sort((a,b) => Date.parse(a.startsAt)-Date.parse(b.startsAt)).map(e => ({ id: e.id, title: e.title, description: e.description, startsAt: e.startsAt, endsAt: e.endsAt || null, timezone: e.timezone, hasBanner: !!e.banner, inviteUrl: `https://t.me/${env.BOT_USERNAME}?start=e_${e.id}`, responsesClosed: responsesClosed(e) }));
+    return respond({ timezone: zone, events });
+  }
   const mediaResponse = await mediaApi(request, env, user);
   if (mediaResponse) return mediaResponse;
   if (path.startsWith('/api/admin')) {
@@ -87,7 +101,7 @@ export async function miniApi(request, env) {
   if (bannerMatch && ['GET', 'POST'].includes(request.method)) {
     const row = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(bannerMatch[1]).first();
     const event = row && JSON.parse(row.data);
-    if (!event || (event.owner !== user.id && !event.guests[user.id])) return respond({ error: 'Open a valid invitation first.' }, 403);
+    if (!event || (event.owner !== user.id && !event.guests[user.id] && !(request.method === 'GET' && event.isPublic === true && !event.cancelled))) return respond({ error: 'Open a valid invitation first.' }, 403);
     try {
       if (request.method === 'GET') {
         if (!event.banner) return respond({ error: 'No banner.' }, 404);

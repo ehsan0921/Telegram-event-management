@@ -39,7 +39,8 @@ function go(tab) {
   const target = tab === 'pending' ? 'events' : tab;
   if (tab === 'events' || tab === 'pending') { listFilter = tab === 'pending' ? 'pending' : 'all'; renderEvents(); }
   if (tab === 'admin' && !state.user?.isSuperAdmin) return;
-  for (const name of ['events', 'create', 'settings', 'admin', 'gallery']) $(name + '-view').hidden = name !== target;
+  for (const name of ['events', 'create', 'settings', 'admin', 'gallery', 'explore']) $(name + '-view').hidden = name !== target;
+  if (tab === 'explore') loadExplore();
   if (tab === 'admin') loadAdmin();
   for (const button of document.querySelectorAll('[data-tab]')) {
     if (button.dataset.tab === tab) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
@@ -128,6 +129,7 @@ function renderEvents() {
 function setupForm(event = null) {
   activeEvent = event; createdEvent = null; requestId = crypto.randomUUID();
   $('event-form').reset(); $('event-form').hidden = false; $('success').hidden = true; $('form-error').hidden = true;
+  $('visibility-panel').hidden = compactPicker; $('event-visibility').value = event?.isPublic ? 'public' : 'private';
   $('ending-panel').hidden = deadlinePicker;
   $('end-mode').value = event?.endMode || 'none';
   $('duration-hours').value = event?.durationMinutes ? Math.floor(event.durationMinutes / 60) : 2;
@@ -188,6 +190,24 @@ async function refresh() {
   options('local-zone', selectedZone()); $('device-zone').textContent = `Detected on this device: ${deviceZone}`;
   renderEvents(); return data;
 }
+async function loadExplore() {
+  $('explore-refresh').disabled=true; $('explore-error').hidden=true;
+  $('explore-zone').textContent='Public events in '+selectedZone().replaceAll('_',' ');
+  const list=$('explore-list');list.replaceChildren(element('p','Finding public events…','muted'));
+  try {
+    const result=await api('explore?timezone='+encodeURIComponent(selectedZone()));list.replaceChildren();
+    if(!result.events.length) list.append(element('div','No public upcoming events in your timezone yet.','empty'));
+    for(const event of result.events) {
+      const card=element('article','','event-card');
+      if(event.hasBanner) { const img=document.createElement('img');img.className='event-banner';img.alt='Banner for '+event.title;card.append(img);fetch(`/api/events/${event.id}/banner`,{headers:{Authorization:'tma '+initData}}).then(r=>{if(!r.ok)throw new Error();return r.blob();}).then(blob=>{if(!img.isConnected)return;const url=URL.createObjectURL(blob);img.src=url;img.onload=()=>URL.revokeObjectURL(url);}).catch(()=>img.remove()); }
+      card.append(element('span','PUBLIC','tag'),element('h3',event.title),element('p','🗓 '+format(event)),element('p',event.description));
+      if(event.responsesClosed)card.append(element('p','Responses are closed.','small muted'));
+      card.append(action('Open invitation in Telegram',()=>openTelegram(event.inviteUrl),'primary'));list.append(card);
+    }
+  } catch(error) {list.replaceChildren();$('explore-error').textContent=error.message;$('explore-error').hidden=false;}
+  finally {$('explore-refresh').disabled=false;}
+}
+$('explore-refresh').onclick=loadExplore;
 async function loadAdmin() {
   $('admin-refresh').disabled = true; $('admin-error').hidden = true;
   try { adminData = await api('admin/overview'); renderAdmin(); }
@@ -254,7 +274,7 @@ $('timezone-form').onsubmit = async event => {
 };
 $('event-form').onsubmit = async event => {
   event.preventDefault(); $('save-event').disabled = true; $('form-error').hidden = true;
-  const payload = { allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
+  const payload = { isPublic: $('event-visibility').value === 'public', allowLinkUploads: $('allow-link-uploads').checked, ...endingInput(), defaultReminder: Number($('default-reminder').value), date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
   try {
     const banner = $('banner').files[0];
     if (!compactPicker && banner && (banner.size > 5 * 1024 * 1024 || !['image/jpeg','image/png','image/webp'].includes(banner.type))) throw new Error('Choose a JPG, PNG, or WebP banner smaller than 5 MB.');

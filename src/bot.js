@@ -51,6 +51,7 @@ export class Bot {
     return [...Object.entries(permissionLabels).map(([key, label]) => [button(`${settings[key] ? '✅' : '⬜'} ${label}`, `${prefix}:${key}`)]),
       [button(`${e.requireApproval ? '✅' : '⬜'} Organiser approval required`, `${prefix}:requireApproval`)],
       [button(`${e.hideLocation || e.requireApproval ? '✅' : '⬜'} Location only after acceptance / approval`, `${prefix}:hideLocation`)],
+      [button(`${e.isPublic ? '🌍 Public' : '🔒 Private'} event`, `${prefix}:isPublic`)],
       [button(`${e.allowLinkUploads ? '✅' : '⬜'} Anyone with upload link can send files`, `${prefix}:allowLinkUploads`)]];
   }
   async creationPermissions(id, s) {
@@ -299,6 +300,7 @@ export class Bot {
       if (action === 'pd') return this.finishCreation(id, s);
       if (Object.hasOwn(permissionLabels, arg)) s.draft.permissions[arg] = !s.draft.permissions[arg];
       if (['requireApproval', 'hideLocation'].includes(arg)) s.draft[arg] = !s.draft[arg];
+      if (arg === 'isPublic') s.draft.isPublic = !s.draft.isPublic;
       if (arg === 'allowLinkUploads') { s.draft.allowLinkUploads = !s.draft.allowLinkUploads; s.draft.uploadToken = s.draft.allowLinkUploads ? randomBytes(16).toString('hex') : null; }
       return this.creationPermissions(id, s);
     }
@@ -381,6 +383,7 @@ export class Bot {
       e.permissions = permissions(e);
       if (action === 'toggle' && Object.hasOwn(permissionLabels, arg)) e.permissions[arg] = !e.permissions[arg];
       if (action === 'toggle' && ['requireApproval', 'hideLocation'].includes(arg)) e[arg] = !e[arg];
+      if (action === 'toggle' && arg === 'isPublic') e.isPublic = !e.isPublic;
       if (action === 'toggle' && arg === 'allowLinkUploads') { e.allowLinkUploads = !e.allowLinkUploads; e.uploadToken = e.allowLinkUploads ? randomBytes(16).toString('hex') : null; }
       return this.send(id, 'Guest options — tap to enable or disable. Changes apply immediately to guests, including old buttons.', keyboard(...this.permissionKeyboard(e, `toggle:${eid}`), ...(this.appUrl ? [[this.miniButton('🗓 Deadline & invitation details', `?event=${eid}`)]] : []), [button('Back to organiser tools', `h:${eid}`)]));
     }
