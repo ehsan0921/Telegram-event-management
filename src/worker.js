@@ -1,5 +1,6 @@
 import { mutateState, BusyError } from './worker-store.js';
 import { miniApi } from './mini-api.js';
+import { sendDueReminders } from './reminders.js';
 
 export async function authorized(request, secret) {
   if (!secret) return false;
@@ -71,7 +72,7 @@ export default {
       headers.set('Cache-Control', 'no-cache');
       headers.set('X-Content-Type-Options', 'nosniff');
       headers.set('Referrer-Policy', 'no-referrer');
-      headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'self'; object-src 'none'");
+      headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; base-uri 'self'; object-src 'none'");
       return new Response(asset.body, { status: asset.status, headers });
     }
     if (request.method === 'GET' && url.pathname === '/') return Response.json({ service: 'XEvents', status: 'running' });
@@ -108,7 +109,7 @@ export default {
   },
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(configureMiniApp(env));
-    ctx.waitUntil(drainOutbox(env));
+    ctx.waitUntil(mutateState(env, (data, bot) => sendDueReminders(data, bot)).then(() => drainOutbox(env)).catch(error => { if (!(error instanceof BusyError)) console.error('reminder_processing_failed'); }));
     ctx.waitUntil(env.DB.prepare('DELETE FROM processed WHERE at < unixepoch()-604800').run());
   }
 };

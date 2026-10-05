@@ -7,7 +7,10 @@ const mf = new Miniflare(convertV4MiniflareOptions({
   workers: [{ name: 'test',
   modules: true, scriptPath: '.wrangler/build/worker.js', compatibilityDate: '2026-10-05', compatibilityFlags: ['nodejs_compat'],
   d1Databases: ['DB'], bindings: { BOT_USERNAME: 'XEvents_bot', APP_URL: 'https://test/app', TELEGRAM_BOT_TOKEN: 'fake', TELEGRAM_WEBHOOK_SECRET: 'test-secret' },
-  outboundService: async () => new Response(JSON.stringify({ ok: true, result: {} }), { headers: { 'Content-Type': 'application/json' } })
+  outboundService: async request => {
+    if (request.url.includes('/file/bot')) return new Response(new Uint8Array([255,216,255]), { headers: { 'Content-Type':'image/jpeg' } });
+    return new Response(JSON.stringify({ ok: true, result: request.url.endsWith('/sendPhoto') ? { photo:[{file_id:'test-banner'}] } : request.url.endsWith('/getFile') ? {file_path:'photos/banner.jpg'} : {} }), { headers: { 'Content-Type': 'application/json' } });
+  }
   }]
 }));
 try {
@@ -92,5 +95,18 @@ try {
   guestView = (await api('bootstrap', null, 456)).data.events[0]; assert.equal(guestView.approval, 'approved'); assert.equal(guestView.location, 'SECRET LOCATION'); assert.equal(guestView.ticket.info, 'SECRET TICKET'); assert.ok(guestView.ticket.code);
   assert.equal((await api('bootstrap')).data.events.find(e => e.id === privateId).counts.yes, 1);
   assert.equal((await api('bootstrap', null, 789)).data.events.length, 0);
+  assert.equal((await api(`events/${privateId}/reminder`, {minutes:60},456)).status,200);
+  assert.equal((await api('bootstrap',null,456)).data.events[0].reminder,60);
+  assert.equal((await api(`events/${privateId}/reminder`, {minutes:60},789)).status,400);
+  assert.equal((await api(`events/${privateId}/reminder`, {minutes:0},456)).status,200);
+  const form=new FormData(); form.set('photo',new File([new Uint8Array([255,216,255])],'banner.jpg',{type:'image/jpeg'}));
+  const uploadRequest=new Request('https://test/upload',{method:'POST',body:form});
+  const uploadBytes=await uploadRequest.arrayBuffer(); const uploadType=uploadRequest.headers.get('Content-Type');
+  assert.equal((await mf.dispatchFetch(`https://test/api/events/${privateId}/banner`,{method:'POST',headers:{Authorization:'tma '+initData(456),'Content-Type':uploadType},body:uploadBytes})).status,403);
+  const uploaded=await mf.dispatchFetch(`https://test/api/events/${privateId}/banner`,{method:'POST',headers:{Authorization:'tma '+initData(123),'Content-Type':uploadType},body:uploadBytes});
+  assert.equal(uploaded.status,200); assert.equal((await uploaded.json()).event.hasBanner,true);
+  assert.equal((await mf.dispatchFetch(`https://test/api/events/${privateId}/banner`,{headers:{Authorization:'tma '+initData(789)}})).status,403);
+  const image=await mf.dispatchFetch(`https://test/api/events/${privateId}/banner`,{headers:{Authorization:'tma '+initData(456)}});
+  assert.equal(image.status,200); assert.equal(image.headers.get('Content-Type'),'image/jpeg'); assert.equal((await image.arrayBuffer()).byteLength,3);
   console.log('Worker integration passed: authentication, timezone/date conversion, opt-in guest settings, private data, deadlines, approvals/tickets, and chat picker continuation. Telegram mocked.');
 } finally { await mf.dispose(); }

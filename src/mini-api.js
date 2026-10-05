@@ -2,6 +2,7 @@ import { authenticate } from './mini-auth.js';
 import { schedule, timezone, InputError } from './time.js';
 import { mutateState, BusyError } from './worker-store.js';
 import { randomBytes } from 'node:crypto';
+import { upcoming, eventGroup, setReminder } from './reminders.js';
 import { permissions, permissionLabels, can, confirmed, canSeeLocation, responsesClosed, responseCounts } from './permissions.js';
 
 function field(value, label, max, required = false) {
@@ -39,6 +40,7 @@ export function publicEvent(e, id, username) {
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,
     isOwner: e.owner === id, cancelled: e.cancelled, inviteUrl: `https://t.me/${username}?start=e_${e.id}`,
     permissions: permissions(e),
+    group: eventGroup(e), upcoming: upcoming(e), reminder: e.reminders?.[id]?.minutes || 0, hasBanner: !!e.banner,
     requireApproval: e.requireApproval === true, hideLocation: e.hideLocation === true,
     responseDeadline: e.responseDeadline || null, responsesClosed: responsesClosed(e), deadlineDate: e.deadlineDate || '', deadlineTime: e.deadlineTime || '', deadlineTimezone: e.deadlineTimezone || e.timezone || null,
     ...(e.owner === id ? { ticketInfo: e.ticketInfo || '' } : {}),
@@ -55,6 +57,41 @@ export async function miniApi(request, env) {
   const user = authenticate(request.headers.get('Authorization')?.replace(/^tma /, ''), env.TELEGRAM_BOT_TOKEN);
   if (!user) return respond({ error: 'Open the planner inside Telegram. If it was open for a while, close and reopen it.' }, 401);
   const path = new URL(request.url).pathname;
+  const bannerMatch = path.match(/^\/api\/events\/([a-f0-9]{16})\/banner$/);
+  if (bannerMatch && ['GET', 'POST'].includes(request.method)) {
+    const row = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(bannerMatch[1]).first();
+    const event = row && JSON.parse(row.data);
+    if (!event || (event.owner !== user.id && !event.guests[user.id])) return respond({ error: 'Open a valid invitation first.' }, 403);
+    try {
+      if (request.method === 'GET') {
+        if (!event.banner) return respond({ error: 'No banner.' }, 404);
+        const lookup = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getFile`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file_id: event.banner }), signal: AbortSignal.timeout(10000) });
+        const file = await lookup.json();
+        if (!file.ok || !file.result?.file_path) throw new Error();
+        const photo = await fetch(`https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${file.result.file_path}`, { signal: AbortSignal.timeout(10000) });
+        if (!photo.ok) throw new Error();
+        return new Response(photo.body, { headers: { ...headers, 'Content-Type': 'image/jpeg' } });
+      }
+      if (event.owner !== user.id || event.cancelled) return respond({ error: 'Only the organiser can change an active event banner.' }, 403);
+      if (Number(request.headers.get('Content-Length')) > 6 * 1024 * 1024) return respond({ error: 'Use a photo smaller than 5 MB.' }, 413);
+      const bytes = await request.arrayBuffer();
+      if (bytes.byteLength > 6 * 1024 * 1024) return respond({ error: 'Use a photo smaller than 5 MB.' }, 413);
+      const form = await new Response(bytes, { headers: { 'Content-Type': request.headers.get('Content-Type') || '' } }).formData();
+      const photo = form.get('photo');
+      if (!(photo instanceof File) || !photo.size || photo.size > 5 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(photo.type)) return respond({ error: 'Choose a JPG, PNG, or WebP photo smaller than 5 MB.' }, 400);
+      const upload = new FormData(); upload.set('chat_id', String(user.id)); upload.set('photo', photo); upload.set('caption', `Banner for ${event.title}`);
+      const result = await (await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendPhoto`, { method: 'POST', body: upload, signal: AbortSignal.timeout(20000) })).json();
+      const fileId = result.result?.photo?.at(-1)?.file_id;
+      if (!result.ok || !fileId) return respond({ error: 'Telegram could not save that photo. Try a different image.' }, 400);
+      const value = await mutateState(env, (data) => {
+        const current = data.events[event.id];
+        if (!current || current.owner !== user.id || current.cancelled) throw new InputError('This event is no longer available for changes.');
+        current.banner = fileId;
+        return { event: publicEvent(current, user.id, env.BOT_USERNAME) };
+      });
+      return respond(value);
+    } catch (error) { console.error('banner_failed', error.name); return respond({ error: error instanceof BusyError ? error.message : 'Could not load or save the banner. Please try again.' }, 503); }
+  }
   if (path === '/api/bootstrap' && request.method === 'GET') {
     const { results } = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND (json_extract(data,'$.owner')=? OR json_type(data,?) IS NOT NULL)").bind(user.id, `$.guests."${user.id}"`).all();
     const preference = await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(user.id)).first();
@@ -117,6 +154,13 @@ export async function miniApi(request, env) {
         return { saved: true };
       }
       const match = path.match(/^\/api\/events\/([a-f0-9]{16})\/schedule$/);
+      const reminderMatch = path.match(/^\/api\/events\/([a-f0-9]{16})\/reminder$/);
+      if (reminderMatch) {
+        const e = data.events[reminderMatch[1]];
+        if (!bot.allowed(e, id) || e.cancelled) throw new InputError('Open an active invitation first.');
+        setReminder(e, id, input.minutes);
+        return { event: publicEvent(e, id, env.BOT_USERNAME) };
+      }
       if (match) {
         const e = data.events[match[1]];
         if (!e || e.owner !== id || e.cancelled) throw new InputError('Only the organiser can change an active event.');

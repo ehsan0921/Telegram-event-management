@@ -35,6 +35,10 @@ The bot runs while this process is running. For continuous availability, run it 
 - Guided creation: title, date/time/timezone text, location, description, and up to 10 custom questions.
 - Random invitation links to share with anyone. Guests open the link and press Start.
 - Accept, decline, tentative, or respond later, with editable public RSVP comments.
+- Accepted guests see Accepted and Change response instead of four RSVP buttons. My status appears only for events requiring organiser approval; guest-list and media buttons follow the organiser’s settings.
+- My events groups upcoming, past, undated, and cancelled events in chat and the Mini App. Personal reminders are available 15 minutes, 1 hour, or 1 day before an exact upcoming start. Cloudflare checks once per minute; reminders follow schedule changes, skip cancelled/declined events, and keep private locations out of the notification.
+- Optional event banners can be added during chat creation or uploaded through the Mini App (JPG/PNG/WebP, up to 5 MB). Organisers can replace them afterwards. Telegram stores the photo; authenticated banner reads enforce event membership without exposing the bot token.
+- Visible addresses have Copy address buttons and copyable monospace text in the chat event message. Long addresses open a separate copyable message. Hidden locations remain unavailable until acceptance/approval.
 - On acceptance: Telegram name or custom display name, optional own contact or typed phone number, and optional answers to organiser questions.
 - Organisers do not RSVP and are excluded from guest counts. Guests get Accept, Decline, Tentative, and Later; the organiser chooses whether to enable guest lists, media uploads, and media browsing. Extras default off, including for older events without explicit permissions. Organisers retain access to all management tools.
 - Guest options are selectable during both chat and Mini App creation and adjustable afterwards. Restrictions are enforced on callbacks, active upload sessions, and Mini App data, so old buttons cannot bypass them. Guest lists and counts stay private unless enabled; phone numbers and question answers always stay private to the organiser.
@@ -51,7 +55,7 @@ The bot runs while this process is running. For continuous availability, run it 
 
 Telegram hosts uploaded media; the bot stores reusable Telegram file IDs and metadata, not independent downloaded backups. Media is visible to guests only if browsing is enabled. RSVP comments appear to other guests only when the guest list is enabled. Share links with intended guests. Replacing a link blocks the old invitation but retains existing guests. Removing an item hides it from the collection; it cannot remove previously delivered Telegram copies.
 
-The local JSON database contains phone numbers and answers in plain text. Keep the data directory private and back it up securely. `.env` and `data/` are excluded from Git. Dates typed as free text are displayed as entered; the Mini App picker supports automatic timezone conversion. Automatic reminders and calendar integration are not implemented.
+The local JSON database contains phone numbers and answers in plain text. Keep the data directory private and back it up securely. `.env` and `data/` are excluded from Git. Dates typed as free text are displayed as entered; the Mini App picker supports automatic timezone conversion. Scheduled reminders run on the Cloudflare deployment. Calendar integration is not implemented.
 
 Custom questions are set during event creation. Notification delivery is best effort if a user blocks the bot. Guests who receive a link but never open it cannot be listed or messaged by the bot.
 

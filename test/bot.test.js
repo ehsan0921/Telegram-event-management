@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Bot } from '../src/bot.js';
 import { Store } from '../src/store.js';
+import { sendDueReminders, setReminder, eventGroup } from '../src/reminders.js';
 
 function fixture() {
   const store = { data: { events: {}, sessions: {}, offset: 0 } };
@@ -181,4 +182,57 @@ test('answering again replaces old answers and navigation discards unfinished in
   assert.equal(e.guests[2].answers.length, 2); assert.equal(e.guests[2].answers[0].answer, 'New answer');
   await f.cb(2, `r:${e.id}:no`); await f.cb(2, `v:${e.id}`);
   assert.equal(f.store.data.sessions[2], undefined); assert.equal(e.guests[2].status, 'yes');
+});
+
+test('accepted view uses change response and approval-only status with enabled extras', async () => {
+  const f = fixture(); const e = await f.create({ guestList: true, viewMedia: true });
+  await f.msg(2, `/start e_${e.id}`); await f.cb(2, `r:${e.id}:yes`);
+  for (const text of ['Guest','/skip','/skip','/skip','/skip']) await f.msg(2,text);
+  let buttons=f.calls.at(-1).reply_markup.inline_keyboard.flat();
+  assert.match(f.calls.at(-1).text,/✅ Accepted/);
+  assert.ok(buttons.some(b=>b.callback_data===`change:${e.id}`));
+  assert.ok(!buttons.some(b=>b.callback_data?.startsWith('r:') || b.callback_data?.startsWith('status:') || b.callback_data?.startsWith('ticket:') || b.callback_data?.startsWith('u:')));
+  assert.ok(buttons.some(b=>b.callback_data===`g:${e.id}`));
+  await f.cb(2,`change:${e.id}`); assert.equal(f.calls.at(-1).reply_markup.inline_keyboard.flat().filter(b=>b.callback_data.startsWith('r:')).length,4);
+  assert.equal(e.guests[2].status,'yes');
+  e.requireApproval=true; e.hideLocation=true; e.guests[2].approval='pending';
+  await f.bot.card(2,e); buttons=f.calls.at(-1).reply_markup.inline_keyboard.flat();
+  assert.ok(buttons.some(b=>b.callback_data===`status:${e.id}`));
+  assert.ok(!buttons.some(b=>b.copy_text));
+  await f.cb(2,`status:${e.id}`); assert.match(f.calls.at(-1).text,/Awaiting organiser approval/);
+  await f.cb(2,`address:${e.id}`); assert.doesNotMatch(f.calls.at(-1).text,/My house/);
+});
+
+test('banners persist from creation, are owner-controlled, and addresses are copyable', async () => {
+  const f=fixture();
+  for(const text of ['/new','Banner party','Saturday','My house','/skip','/skip']) await f.msg(1,text);
+  const token=f.store.data.sessions[1].token;
+  await f.cb(1,`pb:${token}`); await f.msg(1,undefined,{photo:[{file_id:'banner-small'},{file_id:'banner-large'}]});
+  await f.cb(1,`pd:${token}`); const e=Object.values(f.store.data.events)[0];
+  assert.equal(e.banner,'banner-large'); assert.ok(f.calls.some(c=>c.method==='sendPhoto' && c.photo==='banner-large'));
+  await f.msg(2,`/start e_${e.id}`); await f.cb(2,`banner:${e.id}`); assert.equal(f.store.data.sessions[2],undefined);
+  await f.bot.card(2,e); const card=f.calls.at(-1);
+  assert.equal(card.reply_markup.inline_keyboard.flat().find(b=>b.copy_text).copy_text.text,'My house');
+  const entity=card.entities[0]; assert.equal(card.text.slice(entity.offset,entity.offset+entity.length),'My house');
+  e.location='A'.repeat(300); await f.bot.card(2,e);
+  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data===`address:${e.id}`));
+  await f.cb(2,`address:${e.id}`); assert.equal(f.calls.at(-1).entities[0].length,300);
+});
+
+test('reminders are personal, sent once, rescheduled, and suppressed for cancelled/declined events', async () => {
+  const f=fixture(); const e=await f.create({}); e.startsAt='2099-10-24T07:00:00Z'; e.timezone='Australia/Sydney';
+  await f.msg(2,`/start e_${e.id}`); await f.cb(2,`remind:${e.id}:60`);
+  assert.equal(e.reminders[2].minutes,60); assert.equal(e.reminders[1],undefined);
+  await f.cb(99,`remind:${e.id}:60`); assert.equal(e.reminders[99],undefined);
+  const start=Date.parse(e.startsAt); f.calls.length=0;
+  await sendDueReminders(f.store.data,f.bot,start-3600001); assert.equal(f.calls.length,0);
+  await sendDueReminders(f.store.data,f.bot,start-3600000); assert.equal(f.calls.length,1);
+  assert.doesNotMatch(f.calls[0].text,/My house/);
+  await sendDueReminders(f.store.data,f.bot,start-1000); assert.equal(f.calls.length,1);
+  e.startsAt='2099-10-25T07:00:00Z'; await sendDueReminders(f.store.data,f.bot,Date.parse(e.startsAt)-1000); assert.equal(f.calls.length,2);
+  e.reminders[2].sentFor=null; e.cancelled=true; await sendDueReminders(f.store.data,f.bot,Date.parse(e.startsAt)-1000); assert.equal(f.calls.length,2);
+  e.cancelled=false; e.guests[2].status='no'; await sendDueReminders(f.store.data,f.bot,Date.parse(e.startsAt)-1000); assert.equal(f.calls.length,2);
+  assert.throws(()=>setReminder(e,2,60,Date.parse(e.startsAt)-1000),/already passed/);
+  assert.equal(eventGroup(e,start),'Upcoming events'); assert.equal(eventGroup(e,Date.parse(e.startsAt)+1),'Past events');
+  setReminder(e,2,0); assert.equal(e.reminders[2],undefined);
 });

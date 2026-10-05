@@ -8,6 +8,8 @@ const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 let state = { events: [], preference: {} }, activeEvent = null, createdEvent = null, previewSequence = 0;
 let requestId = crypto.randomUUID();
 let listFilter = 'all';
+let bannerPreviewUrl;
+const bannerUrls = new Map();
 const initData = tg?.initData || '';
 let zones = [...new Set(['UTC', deviceZone, ...(Intl.supportedValuesOf?.('timeZone') || ['Australia/Sydney', 'Europe/London', 'America/New_York', 'Asia/Tehran'])])].sort();
 tg?.ready(); tg?.expand();
@@ -57,10 +59,17 @@ function renderEvents() {
   document.querySelector('.section-heading h2').textContent = listFilter === 'pending' ? 'Pending invitations' : 'Your events';
   const events = [...state.events].filter(e => listFilter !== 'pending' || (!e.isOwner && !e.cancelled && e.status === 'later')).sort((a, b) => Number(a.cancelled) - Number(b.cancelled) || (a.startsAt || '').localeCompare(b.startsAt || ''));
   if (!events.length) { const empty = element('div', '', 'empty'); empty.append(element('strong', listFilter === 'pending' ? 'You’re all caught up.' : 'A calendar full of possibilities.'), element('span', listFilter === 'pending' ? 'No unanswered invitations.' : 'Create your first event, or open an invitation in the bot to join one.')); list.append(empty); }
+  let lastGroup;
+  events.sort((a,b) => ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(a.group) - ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(b.group) || (a.group === 'Past events' ? (b.startsAt || '').localeCompare(a.startsAt || '') : (a.startsAt || '').localeCompare(b.startsAt || '')));
   for (const e of events) {
+    if (listFilter === 'all' && e.group !== lastGroup) { list.append(element('h2', e.group, 'event-group')); lastGroup = e.group; }
     const card = element('article', '', 'event-card');
+    if (e.hasBanner) {
+      const img = document.createElement('img'); img.className = 'event-banner'; img.alt = `Banner for ${e.title}`; card.append(img);
+      fetch(`/api/events/${e.id}/banner`, { headers: { Authorization: 'tma ' + initData } }).then(r => { if (!r.ok) throw new Error(); return r.blob(); }).then(blob => { if (!img.isConnected) return; const old = bannerUrls.get(e.id); if (old) URL.revokeObjectURL(old); const url = URL.createObjectURL(blob); bannerUrls.set(e.id,url); img.src=url; }).catch(() => img.remove());
+    }
     const meta = element('div', '', 'event-meta'); meta.append(element('span', e.cancelled ? 'CANCELLED' : e.isOwner ? 'YOU’RE HOSTING' : 'INVITED', e.cancelled ? 'tag cancelled' : 'tag'));
-    if (e.status) meta.append(element('span', e.approval === 'pending' ? 'Awaiting approval' : { yes: 'Coming', no: 'Not coming', maybe: 'Tentative', later: 'Respond later' }[e.status], 'tag'));
+    if (e.status) meta.append(element('span', { yes: 'Accepted', no: 'Not coming', maybe: 'Tentative', later: 'Respond later' }[e.status], 'tag'));
     card.append(meta, element('h3', e.title), element('p', '🗓 ' + format(e)), element('p', '📍 ' + (e.location || (e.requireApproval ? 'Shared after organiser approval' : 'Shared after acceptance')), 'muted'));
     if (e.responsesClosed) card.append(element('p', '⏰ Responses closed — deadline passed.', 'error'));
     else if (e.responseDeadline) card.append(element('p', 'Respond by: ' + format({ startsAt: e.responseDeadline }), 'small muted'));
@@ -71,7 +80,15 @@ function renderEvents() {
     else card.append(element('div', 'Guest list is private to the organiser.', 'counts'));
     const actions = element('div', '', 'event-actions'); actions.append(action('Open event in chat ↗', () => openTelegram(e.inviteUrl), 'primary'));
     if (e.isOwner && !e.cancelled) actions.append(action('Invite', () => share(e)));
-    if (e.isOwner && !e.cancelled) actions.append(action('Edit date & time', () => setupForm(e)));
+    if (e.isOwner && !e.cancelled) actions.append(action('Edit event settings', () => setupForm(e)));
+    if (e.location) actions.append(action('Copy address', async () => { try { await navigator.clipboard.writeText(e.location); notice('✓ Address copied.'); } catch { notice('Select and copy the address shown on the event.'); } }));
+    if (e.upcoming) {
+      const label = element('label', 'Event reminder'); const select = document.createElement('select'); select.setAttribute('aria-label', `Reminder for ${e.title}`);
+      for (const [minutes,text] of [[0,'Off'],[15,'15 minutes before'],[60,'1 hour before'],[1440,'1 day before']]) { const option = element('option',text); option.value=minutes; option.disabled=minutes > 0 && Date.parse(e.startsAt)-minutes*60000 <= Date.now(); select.append(option); }
+      select.value=e.reminder || 0;
+      select.onchange=async () => { select.disabled=true; try { const result=await api(`events/${e.id}/reminder`,{minutes:Number(select.value)}); Object.assign(e,result.event); notice(e.reminder ? '🔔 Reminder saved. We’ll message you in Telegram.' : 'Reminder turned off.'); } catch(err) { select.value=e.reminder || 0; notice(err.message); } finally { select.disabled=false; } };
+      label.append(select); card.append(label);
+    }
     card.append(actions); list.append(card);
   }
 }
@@ -80,6 +97,7 @@ function setupForm(event = null) {
   $('event-form').reset(); $('event-form').hidden = false; $('success').hidden = true; $('form-error').hidden = true;
   const scheduleOnly = compactPicker || !!event;
   $('event-details').hidden = scheduleOnly; $('optional-details').hidden = scheduleOnly;
+  $('banner-panel').hidden = compactPicker; $('banner-preview').hidden = true;
   $('guest-permissions').hidden = compactPicker;
   $('response-deadline').hidden = compactPicker;
   $('clear-draft-deadline').hidden = !deadlinePicker;
@@ -125,6 +143,7 @@ async function refresh() {
 }
 for (const b of document.querySelectorAll('[data-tab]')) b.onclick = () => { notice(''); b.dataset.tab === 'create' ? setupForm() : go(b.dataset.tab); };
 $('hero-create').onclick = () => setupForm();
+$('banner').onchange = () => { if (bannerPreviewUrl) URL.revokeObjectURL(bannerPreviewUrl); const file=$('banner').files[0]; $('banner-preview').hidden=!file; if (file) { bannerPreviewUrl=URL.createObjectURL(file); $('banner-preview').src=bannerPreviewUrl; } };
 $('cancel-edit').onclick = () => go('events');
 $('refresh').onclick = async () => { $('refresh').disabled = true; try { await refresh(); notice(''); } catch (e) { notice(e.message); } finally { $('refresh').disabled = false; } };
 for (const id of ['date', 'time', 'event-zone']) $(id).addEventListener('change', () => { clearTimeout(timer); timer = setTimeout(preview, 180); });
@@ -143,6 +162,8 @@ $('event-form').onsubmit = async event => {
   event.preventDefault(); $('save-event').disabled = true; $('form-error').hidden = true;
   const payload = { date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
   try {
+    const banner = $('banner').files[0];
+    if (!compactPicker && banner && (banner.size > 5 * 1024 * 1024 || !['image/jpeg','image/png','image/webp'].includes(banner.type))) throw new Error('Choose a JPG, PNG, or WebP banner smaller than 5 MB.');
     if (compactPicker) {
       await api(deadlinePicker ? 'draft-deadline' : 'picker', { ...payload, sessionToken: query.get('session') });
       $('event-form').hidden = true; notice('✓ Time saved. Continue with the next step in your bot chat.');
@@ -152,6 +173,13 @@ $('event-form').onsubmit = async event => {
       const path = activeEvent ? `events/${activeEvent.id}/schedule` : 'events';
       const result = await api(path, { ...payload, title: $('title').value, location: $('location').value, description: $('description').value, questions: $('questions').value, requestId });
       createdEvent = result.event; await refresh();
+      if (banner) {
+        const form = new FormData(); form.set('photo', banner);
+        const response = await fetch(`/api/events/${createdEvent.id}/banner`, { method: 'POST', headers: { Authorization: 'tma ' + initData }, body: form });
+        const saved = await response.json();
+        if (!response.ok) throw new Error('Event saved. ' + saved.error + ' Your event won’t be duplicated if you retry.');
+        createdEvent = saved.event; await refresh();
+      }
       $('event-form').hidden = true; $('success').hidden = false; $('share-event').hidden = false; $('another-event').hidden = false;
       $('success-title').textContent = activeEvent ? 'The new time is set.' : 'Your event is ready.'; $('success-time').textContent = format(createdEvent);
       $('open-chat').textContent = 'Open event in chat'; $('open-chat').onclick = () => openTelegram(createdEvent.inviteUrl);
