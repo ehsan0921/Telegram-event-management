@@ -7,6 +7,7 @@ import { permissions, permissionLabels, can, guests, confirmed, canSeeLocation, 
 const labels = { yes: '✅ Accepted', no: '❌ Not coming', maybe: '🤔 Tentative', later: '⏳ Respond later' };
 const button = (text, callback_data) => ({ text, callback_data });
 const keyboard = (...rows) => ({ inline_keyboard: rows });
+const paired = buttons => Array.from({ length: Math.ceil(buttons.length / 2) }, (_, index) => buttons.slice(index * 2, index * 2 + 2));
 const name = u => [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username || 'Guest';
 const clean = (s, max = 1000) => typeof s === 'string' ? s.trim().slice(0, max) : '';
 const menu = { new: '🎉 Create event', events: '📅 My events', help: '❓ Help', home: '🏠 Main menu', cancel: '✖️ Cancel input', skip: '⏭ Skip', done: '✅ Finish uploads', name: '👤 Use Telegram name', app: '📱 Open planner', picker: '🗓 Pick date & time', pending: '⏳ Pending invitations' };
@@ -48,14 +49,23 @@ export class Bot {
   }
   permissionKeyboard(e, prefix) {
     const settings = permissions(e);
-    return [...Object.entries(permissionLabels).map(([key, label]) => [button(`${settings[key] ? '✅' : '⬜'} ${label}`, `${prefix}:${key}`)]),
-      [button(`${e.requireApproval ? '✅' : '⬜'} Organiser approval required`, `${prefix}:requireApproval`)],
-      [button(`${e.hideLocation || e.requireApproval ? '✅' : '⬜'} Location only after acceptance / approval`, `${prefix}:hideLocation`)],
-      [button(`${e.isPublic ? '🌍 Public' : '🔒 Private'} event`, `${prefix}:isPublic`)],
-      [button(`${e.allowLinkUploads ? '✅' : '⬜'} Anyone with upload link can send files`, `${prefix}:allowLinkUploads`)]];
+    return paired([
+      ...Object.entries({ guestList: 'Guest list', uploadMedia: 'Upload media', viewMedia: 'View media' }).map(([key, label]) => button(`${settings[key] ? '✅' : '⬜'} ${label}`, `${prefix}:${key}`)),
+      button(`${e.requireApproval ? '✅' : '⬜'} Approval`, `${prefix}:requireApproval`),
+      button(`${e.hideLocation || e.requireApproval ? '✅' : '⬜'} Private location`, `${prefix}:hideLocation`),
+      button(`${e.isPublic ? '🌍 Public' : '🔒 Private'}`, `${prefix}:isPublic`),
+      button(`${e.allowLinkUploads ? '✅' : '⬜'} Link uploads`, `${prefix}:allowLinkUploads`)
+    ]);
   }
   async creationPermissions(id, s) {
-    return this.send(id, `Guest options\nGuests get Accept, Decline, Tentative, and Later until the response deadline. Tap to enable extras, then Create event.\n\nResponse deadline: ${s.draft.responseDeadline || 'No deadline'}`, keyboard(...this.permissionKeyboard(s.draft, `pc:${s.token}`), ...(this.appUrl ? [[this.miniButton('🗓 Set response deadline', `?mode=deadline&session=${s.token}`)]] : []), [button('🔔 Default reminder: ' + reminderLabel(s.draft.defaultReminder || 0), `pc:${s.token}:defaultReminder`)], [button(s.draft.banner ? '🖼 Replace banner' : '🖼 Add banner', `pb:${s.token}`)], [button('🎉 Create event', `pd:${s.token}`)], [button('Cancel', 'nav:home')]));
+    const buttons = [
+      ...this.permissionKeyboard(s.draft, `pc:${s.token}`).flat(),
+      ...(this.appUrl ? [this.miniButton('🗓 Reply deadline', `?mode=deadline&session=${s.token}`)] : []),
+      button('🔔 ' + reminderLabel(s.draft.defaultReminder || 0), `pc:${s.token}:defaultReminder`),
+      button(s.draft.banner ? '🖼 Replace banner' : '🖼 Add banner', `pb:${s.token}`),
+      button('🎉 Create event', `pd:${s.token}`), button('Cancel', 'nav:home')
+    ];
+    return this.send(id, `Guest options\nTap to enable extras. Approval holds invitation details until you approve. Private location reveals the address after acceptance or approval. Link uploads let anyone with the upload link contribute. Public events appear in Explore.\n\nDefault reminder: ${reminderLabel(s.draft.defaultReminder || 0)}\nResponse deadline: ${s.draft.responseDeadline || 'No deadline'}`, keyboard(...paired(buttons)));
   }
   async pendingInvitations(id) {
     const events = Object.values(this.db.events).filter(e => e.owner !== id && !e.cancelled && e.guests[id]?.status === 'later');
