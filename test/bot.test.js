@@ -12,9 +12,12 @@ function fixture() {
   const bot = new Bot(store, async (method, params) => { calls.push({ method, ...params }); return {}; }, 'XEvents_bot');
   const msg = (id, text, extra = {}) => bot.handle({ message: { chat: { id, type: 'private' }, from: { id, first_name: `User ${id}` }, text, ...extra } });
   const cb = (id, data) => bot.handle({ callback_query: { id: 'query', from: { id, first_name: `User ${id}` }, data } });
-  async function create() {
+  async function create(settings = { guestList: true, uploadMedia: true, viewMedia: true }) {
     for (const text of ['/new', 'Birthday', '24 October 2026, 6pm Sydney', 'My house', 'Bring a friend', 'Dietary needs?\nWhat will you bring?']) await msg(1, text);
-    return Object.values(store.data.events)[0];
+    const token = store.data.sessions[1].token;
+    for (const [key, enabled] of Object.entries(settings)) if (enabled) await cb(1, `pc:${token}:${key}`);
+    await cb(1, `pd:${token}`);
+    return Object.values(store.data.events).at(-1);
   }
   return { store, bot, calls, msg, cb, create };
 }
@@ -88,6 +91,8 @@ test('button menus complete event creation and RSVP without typed commands', asy
   assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].text, '🎉 Create event');
   await f.msg(1, '🎉 Create event');
   for (const text of ['Button party', 'Saturday, Sydney', 'Park', '⏭ Skip', '⏭ Skip']) await f.msg(1, text);
+  const token = f.store.data.sessions[1].token;
+  await f.cb(1, `pc:${token}:uploadMedia`); await f.cb(1, `pd:${token}`);
   const e = Object.values(f.store.data.events)[0];
   assert.equal(e.description, ''); assert.deepEqual(e.questions, []);
   const invite = f.calls.at(-1).reply_markup.inline_keyboard.flat().find(b => b.url);
@@ -103,6 +108,68 @@ test('button menus complete event creation and RSVP without typed commands', asy
   await f.cb(2, 'nav:home'); assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].text, '🎉 Create event');
   await f.msg(2, '🎉 Create event'); await f.msg(2, '✖️ Cancel input');
   assert.equal(f.store.data.sessions[2], undefined); assert.equal(Object.keys(f.store.data.events).length, 1);
+});
+
+test('organiser does not RSVP and guest extras are opt-in with backend enforcement', async () => {
+  const f = fixture(); const e = await f.create({});
+  await f.cb(1, `v:${e.id}`);
+  assert.ok(!f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b => b.callback_data?.startsWith('r:')));
+  await f.cb(1, `r:${e.id}:yes`); assert.equal(e.guests[1], undefined); assert.equal(f.store.data.sessions[1], undefined);
+  await f.msg(2, `/start e_${e.id}`);
+  const actions = f.calls.at(-1).reply_markup.inline_keyboard.flat().map(b => b.callback_data);
+  assert.deepEqual(actions.filter(x => x?.startsWith('r:')).length, 4);
+  for (const prefix of ['g:', 'u:', 'm:', 'c:']) assert.ok(!actions.some(x => x?.startsWith(prefix)));
+  for (const action of ['g', 'u', 'm']) {
+    await f.cb(2, `${action}:${e.id}`); assert.match(f.calls.at(-1).text, /not enabled/);
+  }
+  await f.cb(2, `toggle:${e.id}:guestList`); assert.equal(e.permissions.guestList, false);
+  await f.cb(1, `toggle:${e.id}:uploadMedia`); await f.cb(2, `u:${e.id}`);
+  assert.equal(f.store.data.sessions[2].step, 'upload');
+  await f.cb(1, `toggle:${e.id}:uploadMedia`);
+  await f.msg(2, undefined, { document: { file_id: 'blocked' } }); assert.equal(e.media.length, 0);
+  await f.cb(1, `g:${e.id}`); assert.match(f.calls.at(-1).text, /Guest|User 2/);
+});
+
+test('Later immediately lists pending invitations and responded events leave that list', async () => {
+  const f = fixture(); const first = await f.create({}); const second = await f.create({});
+  await f.msg(2, `/start e_${first.id}`); await f.msg(2, `/start e_${second.id}`);
+  await f.cb(2, `r:${first.id}:later`);
+  assert.equal(f.store.data.sessions[2], undefined);
+  const listed = f.calls.slice(-2).map(c => c.reply_markup?.inline_keyboard?.flat()[0]?.callback_data);
+  assert.deepEqual(listed.sort(), [`v:${first.id}`, `v:${second.id}`].sort());
+  await f.cb(2, `r:${first.id}:no`); await f.msg(2, '⏭ Skip');
+  f.calls.length = 0; await f.msg(2, '⏳ Pending invitations');
+  assert.equal(f.calls.filter(c => c.reply_markup?.inline_keyboard).length, 1);
+  assert.equal(f.calls.at(-1).reply_markup.inline_keyboard[0][0].callback_data, `v:${second.id}`);
+});
+
+test('approval gates location/tickets and only the organiser can approve or reject', async () => {
+  const f = fixture(); const e = await f.create({ requireApproval: true }); e.ticketInfo = 'Private entry instructions';
+  await f.msg(2, `/start e_${e.id}`); assert.doesNotMatch(f.calls.at(-1).text, /My house|Private entry instructions/);
+  await f.cb(2, `r:${e.id}:yes`);
+  for (const text of ['👤 Use Telegram name', '⏭ Skip', '⏭ Skip', '⏭ Skip', '⏭ Skip']) await f.msg(2, text);
+  assert.equal(e.guests[2].approval, 'pending'); assert.equal(e.guests[2].ticket, undefined);
+  assert.ok(f.calls.some(c => /organiser will send/.test(c.text || '')));
+  assert.doesNotMatch(f.calls.at(-1).text, /My house|Private entry instructions/);
+  await f.cb(2, `approve:${e.id}:2`); assert.equal(e.guests[2].approval, 'pending');
+  await f.cb(2, `ticket:${e.id}`); assert.doesNotMatch(f.calls.at(-1).text, /My house|Private entry instructions/);
+  await f.cb(1, `approve:${e.id}:2`); assert.equal(e.guests[2].approval, 'approved'); assert.ok(e.guests[2].ticket);
+  const ticket = f.calls.find(c => c.chat_id === 2 && c.text?.includes('YOUR INVITATION'));
+  assert.match(ticket.text, /My house/); assert.match(ticket.text, /Private entry instructions/);
+  await f.cb(2, `r:${e.id}:yes`);
+  for (const text of ['👤 Use Telegram name', '⏭ Skip', '⏭ Skip', '⏭ Skip', '⏭ Skip']) await f.msg(2, text);
+  await f.cb(1, `reject:${e.id}:2`); assert.equal(e.guests[2].status, 'no'); assert.equal(e.guests[2].ticket, undefined);
+});
+
+test('deadline blocks old RSVP buttons and unfinished responses but permits approval', async () => {
+  const f = fixture(); const e = await f.create({ requireApproval: true });
+  await f.msg(2, `/start e_${e.id}`); await f.cb(2, `r:${e.id}:yes`); await f.msg(2, 'Guest');
+  e.responseDeadline = '2020-01-01T00:00:00Z';
+  await f.msg(2, '⏭ Skip'); assert.equal(f.store.data.sessions[2], undefined); assert.equal(e.guests[2].status, 'later');
+  await f.cb(2, `r:${e.id}:yes`); assert.equal(e.guests[2].status, 'later');
+  assert.ok(!f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b => b.callback_data?.startsWith('r:')));
+  e.guests[2] = { name: 'Guest', status: 'yes', approval: 'pending', answers: [] };
+  await f.cb(1, `approve:${e.id}:2`); assert.equal(e.guests[2].approval, 'approved');
 });
 
 test('answering again replaces old answers and navigation discards unfinished input', async () => {

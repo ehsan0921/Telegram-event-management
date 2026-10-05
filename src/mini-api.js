@@ -2,18 +2,50 @@ import { authenticate } from './mini-auth.js';
 import { schedule, timezone, InputError } from './time.js';
 import { mutateState, BusyError } from './worker-store.js';
 import { randomBytes } from 'node:crypto';
+import { permissions, permissionLabels, can, confirmed, canSeeLocation, responsesClosed, responseCounts } from './permissions.js';
 
 function field(value, label, max, required = false) {
   if (typeof value !== 'string' || value.trim().length > max || (required && !value.trim())) throw new InputError(`${label} ${required ? 'is required and ' : ''}must be at most ${max} characters.`);
   return value.trim();
 }
+function parsePermissions(value) {
+  if (value === undefined) return permissions({});
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !Object.hasOwn(permissionLabels, k)) || Object.values(value).some(v => typeof v !== 'boolean')) throw new InputError('Guest options must be checked or unchecked.');
+  return permissions({ permissions: value });
+}
+function eventSettings(input, event = {}) {
+  const result = {};
+  if (input.permissions !== undefined || !event.id) result.permissions = parsePermissions(input.permissions);
+  for (const key of ['requireApproval', 'hideLocation']) {
+    if (input[key] !== undefined && typeof input[key] !== 'boolean') throw new InputError('Event options must be checked or unchecked.');
+    if (input[key] !== undefined || !event.id) result[key] = input[key] === true;
+  }
+  if (input.ticketInfo !== undefined || !event.id) result.ticketInfo = field(input.ticketInfo ?? '', 'Invitation details', 1000);
+  if (input.deadlineDate !== undefined || input.deadlineTime !== undefined) {
+    if (!input.deadlineDate && !input.deadlineTime) Object.assign(result, { responseDeadline: null, deadlineDate: '', deadlineTime: '', deadlineTimezone: '' });
+    else {
+      const deadline = schedule({ date: input.deadlineDate, time: input.deadlineTime, timezone: input.timezone || event.timezone });
+      if (event.startsAt && Date.parse(deadline.startsAt) > Date.parse(event.startsAt)) throw new InputError('The response deadline must be at or before the event starts.');
+      Object.assign(result, { responseDeadline: deadline.startsAt, deadlineDate: input.deadlineDate, deadlineTime: input.deadlineTime, deadlineTimezone: deadline.timezone });
+    }
+  }
+  const deadline = result.responseDeadline === undefined ? event.responseDeadline : result.responseDeadline;
+  if (event.startsAt && deadline && Date.parse(deadline) > Date.parse(event.startsAt)) throw new InputError('The response deadline must be at or before the event starts.');
+  return result;
+}
 export function publicEvent(e, id, username) {
   return {
-    id: e.id, title: e.title, when: e.when, location: e.location, description: e.description,
+    id: e.id, title: e.title, when: e.when, location: canSeeLocation(e, id) ? e.location : null, description: e.description,
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,
     isOwner: e.owner === id, cancelled: e.cancelled, inviteUrl: `https://t.me/${username}?start=e_${e.id}`,
-    counts: Object.fromEntries(['yes', 'no', 'maybe', 'later'].map(status => [status, Object.values(e.guests).filter(g => g.status === status).length])),
-    status: e.guests[id]?.status || null
+    permissions: permissions(e),
+    requireApproval: e.requireApproval === true, hideLocation: e.hideLocation === true,
+    responseDeadline: e.responseDeadline || null, responsesClosed: responsesClosed(e), deadlineDate: e.deadlineDate || '', deadlineTime: e.deadlineTime || '', deadlineTimezone: e.deadlineTimezone || e.timezone || null,
+    ...(e.owner === id ? { ticketInfo: e.ticketInfo || '' } : {}),
+    ticket: e.owner !== id && confirmed(e, e.guests[id]) && !e.cancelled ? { code: e.guests[id].ticket || '', name: e.guests[id].name, info: e.ticketInfo || '' } : null,
+    counts: can(e, id, 'guestList') ? responseCounts(e) : null,
+    approval: e.owner !== id && e.guests[id]?.status === 'yes' ? confirmed(e, e.guests[id]) ? 'approved' : 'pending' : null,
+    status: e.owner === id ? null : e.guests[id]?.status || null
   };
 }
 
@@ -28,7 +60,7 @@ export async function miniApi(request, env) {
     const preference = await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(user.id)).first();
     const session = await env.DB.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(user.id)).first();
     const s = session ? JSON.parse(session.data) : null;
-    const pickerSession = s && (s.step === 'when' || (s.step === 'edit' && s.field === 'when')) ? { token: s.token, event: s.event || null } : null;
+    const pickerSession = s && (s.step === 'when' || s.step === 'permissions' || (s.step === 'edit' && s.field === 'when')) ? { token: s.token, event: s.event || null, deadlineDate: s.draft?.deadlineDate || '', deadlineTime: s.draft?.deadlineTime || '', timezone: s.draft?.deadlineTimezone || s.draft?.timezone || null } : null;
     return respond({ user: { firstName: user.first_name || 'Guest' }, preference: preference ? JSON.parse(preference.data) : {}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
   }
   if (request.method !== 'POST') return respond({ error: 'Not found' }, 404);
@@ -54,7 +86,8 @@ export async function miniApi(request, env) {
         const description = field(input.description ?? '', 'Description', 1500);
         const questions = field(input.questions ?? '', 'Questions', 2200).split('\n').map(q => q.trim()).filter(Boolean);
         if (questions.length > 10 || questions.some(q => q.length > 200)) throw new InputError('Use up to 10 questions, each at most 200 characters.');
-        const e = { ...schedule(input), id: randomBytes(8).toString('hex'), title, location, description, questions, owner: id, guests: {}, media: [], cancelled: false, createdAt: new Date().toISOString(), createRequestId: input.requestId };
+        const e = { ...schedule(input), id: randomBytes(8).toString('hex'), title, location, description, questions, permissions: parsePermissions(input.permissions), owner: id, guests: {}, media: [], cancelled: false, createdAt: new Date().toISOString(), createRequestId: input.requestId };
+        Object.assign(e, eventSettings(input, { ...e, id: undefined }));
         data.events[e.id] = e;
         await bot.home(id, '🎉 Your event is ready! Created in your planner.'); await bot.card(id, e);
         return { event: publicEvent(e, id, env.BOT_USERNAME) };
@@ -75,11 +108,20 @@ export async function miniApi(request, env) {
         }
         return { saved: true };
       }
+      if (path === '/api/draft-deadline') {
+        const s = data.sessions[id];
+        if (!s?.draft || s.step !== 'permissions' || s.token !== input.sessionToken) throw new InputError('This deadline picker has expired. Open a new one from the current creation step.');
+        const settings = input.clear === true ? { responseDeadline: null, deadlineDate: '', deadlineTime: '', deadlineTimezone: '' } : eventSettings({ deadlineDate: input.date, deadlineTime: input.time, timezone: input.timezone }, { ...s.draft, id: 'draft' });
+        Object.assign(s.draft, settings);
+        await bot.creationPermissions(id, s);
+        return { saved: true };
+      }
       const match = path.match(/^\/api\/events\/([a-f0-9]{16})\/schedule$/);
       if (match) {
         const e = data.events[match[1]];
         if (!e || e.owner !== id || e.cancelled) throw new InputError('Only the organiser can change an active event.');
         Object.assign(e, schedule(input));
+        Object.assign(e, eventSettings(input, e));
         await bot.notify(e, `📣 ${e.title}: the organiser updated the date and time. Tap My events for the latest details.`); await bot.card(id, e);
         return { event: publicEvent(e, id, env.BOT_USERNAME) };
       }

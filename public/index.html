@@ -35,15 +35,28 @@
         <div id="optional-details" class="panel"><label for="description">A little more about the plan <span>optional</span></label><textarea id="description" rows="3" maxlength="1500" placeholder="What should everyone know?"></textarea>
           <label for="questions">Questions for your guests <span>optional</span></label><textarea id="questions" rows="3" maxlength="2200" placeholder="Any dietary requirements?&#10;What will you bring?"></textarea><p class="small muted">One question per line, up to 10. Answers stay private to you.</p>
         </div>
+        <fieldset id="guest-permissions" class="panel"><legend>Guest options</legend><p class="small muted">Guests always get Accept, Decline, Tentative, and Later. Enable any extras you want them to use.</p>
+          <label class="check-option"><input type="checkbox" id="allow-guest-list"><span>See other guests<span class="check-note">Show guest names, RSVP comments, and response counts.</span></span></label>
+          <label class="check-option"><input type="checkbox" id="allow-upload-media"><span>Send photos, videos & files<span class="check-note">Let guests contribute to the event collection.</span></span></label>
+          <label class="check-option"><input type="checkbox" id="allow-view-media"><span>See shared media<span class="check-note">Let guests browse the event collection.</span></span></label>
+          <p class="small muted">Unchecked extras stay hidden. As organiser, you always have access and don’t need to RSVP.</p>
+          <label class="check-option"><input type="checkbox" id="require-approval"><span>Approve acceptance requests<span class="check-note">Guests wait for your approval before receiving their location and invitation ticket.</span></span></label>
+          <label class="check-option"><input type="checkbox" id="hide-location"><span>Location only after acceptance<span class="check-note">When approval is required, only approved guests see the location.</span></span></label>
+          <label for="ticket-info">Invitation details <span>optional</span></label><textarea id="ticket-info" rows="3" maxlength="1000" placeholder="Entry instructions or details to include on confirmed guests’ tickets."></textarea>
+        </fieldset>
+        <fieldset id="response-deadline" class="panel"><legend>Response deadline</legend><label class="check-option"><input type="checkbox" id="deadline-enabled"><span>Close responses at a set time<span class="check-note">Guests can’t RSVP after this deadline. Existing confirmations and organiser approvals remain available.</span></span></label>
+          <div class="date-row"><div><label for="deadline-date">Deadline date</label><input type="date" id="deadline-date" min="2020-01-01" max="2100-12-31" disabled></div><div><label for="deadline-time">Deadline time</label><input type="time" id="deadline-time" disabled></div></div><p class="small muted">Uses the event timezone. Must be at or before the event starts.</p>
+        </fieldset>
+        <button class="secondary wide" type="button" id="clear-draft-deadline" hidden>Remove response deadline</button>
         <p id="form-error" class="error" role="alert" hidden></p><button class="primary wide" type="submit" id="save-event">Create event & get invite</button><button class="secondary wide" type="button" id="cancel-edit" hidden>Back to events</button>
       </form>
       <div id="success" class="panel success" hidden><span class="eyebrow">IT’S A DATE</span><h2 id="success-title">Your event is ready.</h2><p id="success-time"></p><button class="primary wide" id="share-event">Invite your people ↗</button><button class="secondary wide" id="open-chat">Open event in chat</button><button class="text-button wide" id="another-event">Back to my events</button></div>
     </section>
     <section id="settings-view" class="view" hidden><span class="eyebrow">ON YOUR TIME</span><h1>Your corner<br>of the world.</h1><p class="muted">Pick your local timezone. Your events will show the time where you are.</p>
       <form id="timezone-form" class="panel"><label for="local-zone">My timezone</label><input id="local-zone-search" type="search" placeholder="Find a city or timezone" aria-label="Filter local timezones" autocomplete="off"><select id="local-zone" required></select><button class="secondary wide" type="button" id="detect-zone">Use my device timezone</button><p id="device-zone" class="small muted"></p><button class="primary wide" type="submit" id="save-zone">Save timezone</button><p class="small muted">Saved to your Telegram account. Changing this won’t move an event’s actual start time.</p></form>
-      <div class="panel"><h2>Everything stays together.</h2><p class="muted">RSVPs, guest questions, comments, photos, videos, and files are available in your event’s Telegram chat.</p><a class="text-button" href="https://t.me/XEvents_bot">Open XEvents in Telegram ↗</a></div>
+      <div class="panel"><h2>Everything stays together.</h2><p class="muted">Respond to invitations in the bot chat. Guest lists and media options depend on the organiser’s settings. Confirmed guests can find their invitation ticket here and in chat.</p><a class="text-button" href="https://t.me/XEvents_bot">Open XEvents in Telegram ↗</a></div>
     </section>
   </main>
-  <nav class="bottom-nav" aria-label="Planner navigation"><button data-tab="events" aria-current="page"><span aria-hidden="true">▦</span>My events</button><button data-tab="create"><span aria-hidden="true">＋</span>Create</button><button data-tab="settings"><span aria-hidden="true">◎</span>Timezone</button></nav>
+  <nav class="bottom-nav" aria-label="Planner navigation"><button data-tab="events" aria-current="page"><span aria-hidden="true">▦</span>My events</button><button data-tab="pending"><span aria-hidden="true">◷</span>Pending</button><button data-tab="create"><span aria-hidden="true">＋</span>Create</button><button data-tab="settings"><span aria-hidden="true">◎</span>Timezone</button></nav>
 </body>
 </html>

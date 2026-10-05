@@ -2,9 +2,12 @@ const tg = window.Telegram?.WebApp;
 const $ = id => document.getElementById(id);
 const query = new URLSearchParams(location.search);
 const picker = query.get('mode') === 'picker';
+const deadlinePicker = query.get('mode') === 'deadline';
+const compactPicker = picker || deadlinePicker;
 const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 let state = { events: [], preference: {} }, activeEvent = null, createdEvent = null, previewSequence = 0;
 let requestId = crypto.randomUUID();
+let listFilter = 'all';
 const initData = tg?.initData || '';
 let zones = [...new Set(['UTC', deviceZone, ...(Intl.supportedValuesOf?.('timeZone') || ['Australia/Sydney', 'Europe/London', 'America/New_York', 'Asia/Tehran'])])].sort();
 tg?.ready(); tg?.expand();
@@ -28,7 +31,9 @@ async function api(path, body) {
   return data;
 }
 function go(tab) {
-  for (const name of ['events', 'create', 'settings']) $(name + '-view').hidden = name !== tab;
+  const target = tab === 'pending' ? 'events' : tab;
+  if (tab === 'events' || tab === 'pending') { listFilter = tab === 'pending' ? 'pending' : 'all'; renderEvents(); }
+  for (const name of ['events', 'create', 'settings']) $(name + '-view').hidden = name !== target;
   for (const button of document.querySelectorAll('[data-tab]')) {
     if (button.dataset.tab === tab) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
@@ -49,17 +54,23 @@ function action(text, fn, className = 'secondary') { const b = element('button',
 function renderEvents() {
   $('zone-note').textContent = `Your local time · ${selectedZone().replaceAll('_', ' ')}`;
   const list = $('event-list'); list.replaceChildren();
-  const events = [...state.events].sort((a, b) => Number(a.cancelled) - Number(b.cancelled) || (a.startsAt || '').localeCompare(b.startsAt || ''));
-  if (!events.length) { const empty = element('div', '', 'empty'); empty.append(element('strong', 'A calendar full of possibilities.'), element('span', 'Create your first event, or open an invitation in the bot to join one.')); list.append(empty); }
+  document.querySelector('.section-heading h2').textContent = listFilter === 'pending' ? 'Pending invitations' : 'Your events';
+  const events = [...state.events].filter(e => listFilter !== 'pending' || (!e.isOwner && !e.cancelled && e.status === 'later')).sort((a, b) => Number(a.cancelled) - Number(b.cancelled) || (a.startsAt || '').localeCompare(b.startsAt || ''));
+  if (!events.length) { const empty = element('div', '', 'empty'); empty.append(element('strong', listFilter === 'pending' ? 'You’re all caught up.' : 'A calendar full of possibilities.'), element('span', listFilter === 'pending' ? 'No unanswered invitations.' : 'Create your first event, or open an invitation in the bot to join one.')); list.append(empty); }
   for (const e of events) {
     const card = element('article', '', 'event-card');
     const meta = element('div', '', 'event-meta'); meta.append(element('span', e.cancelled ? 'CANCELLED' : e.isOwner ? 'YOU’RE HOSTING' : 'INVITED', e.cancelled ? 'tag cancelled' : 'tag'));
-    if (e.status) meta.append(element('span', { yes: 'Coming', no: 'Not coming', maybe: 'Tentative', later: 'Respond later' }[e.status], 'tag'));
-    card.append(meta, element('h3', e.title), element('p', '🗓 ' + format(e)), element('p', '📍 ' + e.location, 'muted'));
+    if (e.status) meta.append(element('span', e.approval === 'pending' ? 'Awaiting approval' : { yes: 'Coming', no: 'Not coming', maybe: 'Tentative', later: 'Respond later' }[e.status], 'tag'));
+    card.append(meta, element('h3', e.title), element('p', '🗓 ' + format(e)), element('p', '📍 ' + (e.location || (e.requireApproval ? 'Shared after organiser approval' : 'Shared after acceptance')), 'muted'));
+    if (e.responsesClosed) card.append(element('p', '⏰ Responses closed — deadline passed.', 'error'));
+    else if (e.responseDeadline) card.append(element('p', 'Respond by: ' + format({ startsAt: e.responseDeadline }), 'small muted'));
+    if (e.approval === 'pending') card.append(element('p', 'The organiser will send your invitation details and ticket after approving your response.', 'muted'));
+    if (e.ticket) card.append(element('p', `🎟 ${e.ticket.name}${e.ticket.code ? ' · ' + e.ticket.code : ''}${e.ticket.info ? '\n' + e.ticket.info : ''}`, 'time-preview'));
     if (e.startsAt && selectedZone() !== e.timezone) card.append(element('p', 'Organiser time: ' + format(e, e.timezone), 'small muted'));
-    card.append(element('div', `${e.counts.yes} coming · ${e.counts.maybe} tentative · ${e.counts.no} declined · ${e.counts.later} later`, 'counts'));
+    if (e.counts) card.append(element('div', `${e.counts.yes} coming · ${e.counts.pending || 0} awaiting approval · ${e.counts.maybe} tentative · ${e.counts.no} declined · ${e.counts.later} later`, 'counts'));
+    else card.append(element('div', 'Guest list is private to the organiser.', 'counts'));
     const actions = element('div', '', 'event-actions'); actions.append(action('Open event in chat ↗', () => openTelegram(e.inviteUrl), 'primary'));
-    if (!e.cancelled) actions.append(action('Invite', () => share(e)));
+    if (e.isOwner && !e.cancelled) actions.append(action('Invite', () => share(e)));
     if (e.isOwner && !e.cancelled) actions.append(action('Edit date & time', () => setupForm(e)));
     card.append(actions); list.append(card);
   }
@@ -67,16 +78,30 @@ function renderEvents() {
 function setupForm(event = null) {
   activeEvent = event; createdEvent = null; requestId = crypto.randomUUID();
   $('event-form').reset(); $('event-form').hidden = false; $('success').hidden = true; $('form-error').hidden = true;
-  const scheduleOnly = picker || !!event;
+  const scheduleOnly = compactPicker || !!event;
   $('event-details').hidden = scheduleOnly; $('optional-details').hidden = scheduleOnly;
+  $('guest-permissions').hidden = compactPicker;
+  $('response-deadline').hidden = compactPicker;
+  $('clear-draft-deadline').hidden = !deadlinePicker;
+  $('require-approval').checked = event?.requireApproval === true;
+  $('hide-location').checked = event?.hideLocation === true || event?.requireApproval === true;
+  $('hide-location').disabled = $('require-approval').checked;
+  $('ticket-info').value = event?.ticketInfo || '';
+  $('deadline-enabled').checked = !!event?.responseDeadline;
+  $('deadline-date').value = event?.deadlineDate || '';
+  $('deadline-time').value = event?.deadlineTime || '';
+  updateDeadline();
+  $('allow-guest-list').checked = event?.permissions?.guestList === true;
+  $('allow-upload-media').checked = event?.permissions?.uploadMedia === true;
+  $('allow-view-media').checked = event?.permissions?.viewMedia === true;
   $('title').required = !scheduleOnly; $('location').required = !scheduleOnly;
-  $('form-title').textContent = picker ? 'Pick your moment.' : event ? 'A change of plans.' : 'Make a plan.';
-  $('form-description').textContent = picker ? 'Choose a date and time, then continue in the chat.' : event ? `Update the start time for ${event.title}. Guests will be notified.` : 'Pick a date. Share an invite. Let the good times follow.';
-  $('save-event').textContent = picker ? 'Use this time & continue' : event ? 'Save date & time' : 'Create event & get invite';
+  $('form-title').textContent = deadlinePicker ? 'When do replies close?' : picker ? 'Pick your moment.' : event ? 'A change of plans.' : 'Make a plan.';
+  $('form-description').textContent = deadlinePicker ? 'Set the last date and time guests can respond, then continue creating the event in chat.' : picker ? 'Choose a date and time, then continue in the chat.' : event ? `Update the time and guest options for ${event.title}.` : 'Pick a date. Share an invite. Let the good times follow.';
+  $('save-event').textContent = deadlinePicker ? 'Set response deadline' : picker ? 'Use this time & continue' : event ? 'Save event settings' : 'Create event & get invite';
   $('cancel-edit').hidden = !event;
-  const zone = event?.timezone || selectedZone(); options('event-zone', zone);
+  const zone = deadlinePicker ? state.session?.timezone || selectedZone() : event?.timezone || selectedZone(); options('event-zone', zone);
   const tomorrow = new Date(dateInZone(Date.now(), zone) + 'T12:00:00Z'); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-  $('date').value = event?.localDate || tomorrow.toISOString().slice(0, 10); $('time').value = event?.localTime || '18:00';
+  $('date').value = (deadlinePicker ? state.session?.deadlineDate : event?.localDate) || tomorrow.toISOString().slice(0, 10); $('time').value = (deadlinePicker ? state.session?.deadlineTime : event?.localTime) || '18:00';
   go('create'); preview();
 }
 let timer;
@@ -105,6 +130,10 @@ $('refresh').onclick = async () => { $('refresh').disabled = true; try { await r
 for (const id of ['date', 'time', 'event-zone']) $(id).addEventListener('change', () => { clearTimeout(timer); timer = setTimeout(preview, 180); });
 for (const [search, select] of [['event-zone-search', 'event-zone'], ['local-zone-search', 'local-zone']]) $(search).oninput = () => options(select, $(select).value, $(search).value);
 $('detect-zone').onclick = () => { $('local-zone-search').value = ''; options('local-zone', deviceZone); };
+function updateDeadline() { for (const id of ['deadline-date', 'deadline-time']) { $(id).disabled = !$('deadline-enabled').checked; $(id).required = $('deadline-enabled').checked; } }
+$('deadline-enabled').onchange = updateDeadline;
+$('require-approval').onchange = () => { if ($('require-approval').checked) $('hide-location').checked = true; $('hide-location').disabled = $('require-approval').checked; };
+$('clear-draft-deadline').onclick = async () => { try { await api('draft-deadline', { clear: true, sessionToken: query.get('session') }); notice('✓ Response deadline removed. Continue creating your event in chat.'); tg?.close(); } catch (e) { notice(e.message); } };
 $('timezone-form').onsubmit = async event => {
   event.preventDefault(); $('save-zone').disabled = true;
   try { const result = await api('preferences', { timezone: $('local-zone').value }); state.preference = result.preference; renderEvents(); notice('✓ Your timezone is saved. Event times now show in your local time.'); tg?.HapticFeedback?.notificationOccurred('success'); }
@@ -112,10 +141,10 @@ $('timezone-form').onsubmit = async event => {
 };
 $('event-form').onsubmit = async event => {
   event.preventDefault(); $('save-event').disabled = true; $('form-error').hidden = true;
-  const payload = { date: $('date').value, time: $('time').value, timezone: $('event-zone').value };
+  const payload = { date: $('date').value, time: $('time').value, timezone: $('event-zone').value, permissions: { guestList: $('allow-guest-list').checked, uploadMedia: $('allow-upload-media').checked, viewMedia: $('allow-view-media').checked }, requireApproval: $('require-approval').checked, hideLocation: $('hide-location').checked, ticketInfo: $('ticket-info').value, deadlineDate: $('deadline-enabled').checked ? $('deadline-date').value : '', deadlineTime: $('deadline-enabled').checked ? $('deadline-time').value : '' };
   try {
-    if (picker) {
-      await api('picker', { ...payload, sessionToken: query.get('session') });
+    if (compactPicker) {
+      await api(deadlinePicker ? 'draft-deadline' : 'picker', { ...payload, sessionToken: query.get('session') });
       $('event-form').hidden = true; notice('✓ Time saved. Continue with the next step in your bot chat.');
       $('success').hidden = false; $('success-title').textContent = 'Your time is saved.'; $('success-time').textContent = 'Go back to the chat to continue.'; $('share-event').hidden = true; $('another-event').hidden = true;
       $('open-chat').textContent = 'Continue in Telegram'; $('open-chat').onclick = () => tg?.close();
@@ -142,7 +171,7 @@ if (!initData) {
   try {
     const data = await refresh();
     if (!state.preference.timezone) { const saved = await api('preferences', { timezone: deviceZone }); state.preference = saved.preference; options('local-zone', selectedZone()); renderEvents(); }
-    if (picker) { setupForm(state.events.find(e => e.id === data.session?.event) || null); document.querySelector('.bottom-nav').hidden = true; if (data.session?.token !== query.get('session')) { notice('This picker has expired. Open a new picker from the current chat step.'); $('save-event').disabled = true; } }
+    if (compactPicker) { setupForm(state.events.find(e => e.id === data.session?.event) || null); document.querySelector('.bottom-nav').hidden = true; if (data.session?.token !== query.get('session')) { notice('This picker has expired. Open a new picker from the current chat step.'); $('save-event').disabled = true; } }
     else if (query.get('event')) { const event = state.events.find(e => e.id === query.get('event')); if (event?.isOwner && !event.cancelled) setupForm(event); }
   } catch (e) { notice(e.message); $('event-list').replaceChildren(element('div', 'Could not load your events. Tap Refresh to try again.', 'empty')); }
 }

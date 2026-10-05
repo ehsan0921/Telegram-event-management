@@ -36,15 +36,20 @@ The bot runs while this process is running. For continuous availability, run it 
 - Random invitation links to share with anyone. Guests open the link and press Start.
 - Accept, decline, tentative, or respond later, with editable public RSVP comments.
 - On acceptance: Telegram name or custom display name, optional own contact or typed phone number, and optional answers to organiser questions.
-- Public guest list grouped by response. Phone numbers and question answers are visible only to the organiser.
-- Every invited guest can contribute photos, videos, and documents, regardless of RSVP. Browse shared media five items at a time.
+- Organisers do not RSVP and are excluded from guest counts. Guests get Accept, Decline, Tentative, and Later; the organiser chooses whether to enable guest lists, media uploads, and media browsing. Extras default off, including for older events without explicit permissions. Organisers retain access to all management tools.
+- Guest options are selectable during both chat and Mini App creation and adjustable afterwards. Restrictions are enforced on callbacks, active upload sessions, and Mini App data, so old buttons cannot bypass them. Guest lists and counts stay private unless enabled; phone numbers and question answers always stay private to the organiser.
+- Later immediately opens unanswered invitations. The bot has a Pending invitations button and the Mini App has a Pending tab. Invitations past their deadline remain listed with a closed-response label.
+- Organisers can set a response deadline through native date/time controls. After the deadline, all new RSVP changes and unfinished responses are blocked, while organiser approvals and confirmed tickets remain available. A deadline must be at or before the event start when an exact start is known; removing or extending it reopens responses.
+- Optional location privacy hides the location until acceptance. With approval required, location and invitation details are withheld until the organiser approves. Pending guests receive a message that the organiser will send details after approval.
+- Organisers receive Approve/Reject buttons for acceptance requests and can review them in Private guest responses. Approved guests receive a personalised invitation ticket with a random reference, location, event time, and any private invitation instructions; the ticket also appears in the Mini App. Tickets are invitation confirmations, not payment receipts or a check-in system.
+- Media uploads and browsing are separate permissions. Guests may contribute without browsing if only uploads are enabled. Organisers can always upload, browse, and remove items. Browse shared media five items at a time.
 - Organiser controls: private responses, edit event details, replace invitation link, remove items from the shared collection, and confirm event cancellation with notifications.
 - `/events` lists organised and joined events; `/cancel` abandons input without saving an unfinished RSVP.
 - Events, responses, media references, conversation progress, and polling offset persist in `data/events.json` using atomic writes.
 
 ## Storage and privacy
 
-Telegram hosts uploaded media; the bot stores reusable Telegram file IDs and metadata, not independent downloaded backups. Media and public RSVP comments are visible to anyone who joins using the invitation. Share links with intended guests. Replacing a link blocks the old invitation but retains existing guests. Removing an item hides it from the collection; it cannot remove previously delivered Telegram copies.
+Telegram hosts uploaded media; the bot stores reusable Telegram file IDs and metadata, not independent downloaded backups. Media is visible to guests only if browsing is enabled. RSVP comments appear to other guests only when the guest list is enabled. Share links with intended guests. Replacing a link blocks the old invitation but retains existing guests. Removing an item hides it from the collection; it cannot remove previously delivered Telegram copies.
 
 The local JSON database contains phone numbers and answers in plain text. Keep the data directory private and back it up securely. `.env` and `data/` are excluded from Git. Dates typed as free text are displayed as entered; the Mini App picker supports automatic timezone conversion. Automatic reminders and calendar integration are not implemented.
 

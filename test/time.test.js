@@ -41,7 +41,19 @@ test('Mini App authentication rejects tampering, expiration, future timestamps, 
 });
 
 test('Mini App event responses exclude private guest contact details and answers', () => {
-  const e = { id: 'event', owner: 1, guests: { 2: { name: 'Guest', status: 'yes', phone: 'secret phone', answers: ['secret answer'] } }, questions: ['Private question'] };
+  const e = { id: 'event', owner: 1, permissions: { guestList: true }, guests: { 2: { name: 'Guest', status: 'yes', phone: 'secret phone', answers: ['secret answer'] } }, questions: ['Private question'] };
   const serialized = JSON.stringify(publicEvent(e, 2, 'XEvents_bot'));
   assert.doesNotMatch(serialized, /secret phone|secret answer|Private question/); assert.match(serialized, /"yes":1/);
+});
+
+test('Mini App hides private location/ticket details and counts until allowed', () => {
+  const e = { id: 'event', owner: 1, location: 'SECRET LOCATION', requireApproval: true, ticketInfo: 'SECRET TICKET INFO', guests: { 2: { name: 'Guest', status: 'yes', approval: 'pending' }, 1: { name: 'Organiser', status: 'yes' } } };
+  const pending = publicEvent(e, 2, 'XEvents_bot');
+  assert.equal(pending.location, null); assert.equal(pending.ticket, null); assert.equal(pending.counts, null); assert.doesNotMatch(JSON.stringify(pending), /SECRET/);
+  e.guests[2].approval = 'approved'; e.guests[2].ticket = 'CODE';
+  const approved = publicEvent(e, 2, 'XEvents_bot'); assert.equal(approved.location, 'SECRET LOCATION'); assert.equal(approved.ticket.info, 'SECRET TICKET INFO');
+  const host = publicEvent(e, 1, 'XEvents_bot'); assert.equal(host.status, null); assert.equal(host.counts.yes, 1);
+  e.requireApproval = false; e.hideLocation = true; e.guests[2].status = 'later';
+  assert.equal(publicEvent(e, 2, 'XEvents_bot').location, null);
+  e.guests[2].status = 'yes'; assert.equal(publicEvent(e, 2, 'XEvents_bot').location, 'SECRET LOCATION');
 });
