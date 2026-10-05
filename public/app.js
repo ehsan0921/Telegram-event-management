@@ -57,6 +57,20 @@ function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else wi
 function share(e) { openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.inviteUrl)}&text=${encodeURIComponent(`You're invited to ${e.title}!`)}`); }
 function element(tag, text, className) { const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node; }
 function action(text, fn, className = 'secondary') { const b = element('button', text, className); b.type = 'button'; b.onclick = fn; return b; }
+function confirmAction(message, operation) {
+  const dialog = $('confirm-dialog');
+  if (dialog.open) return Promise.resolve(false);
+  $('confirm-title').textContent = operation === 'delete' ? 'Delete event?' : 'Cancel event?';
+  $('confirm-message').textContent = message;
+  $('confirm-proceed').textContent = operation === 'delete' ? 'Delete event' : 'Cancel event';
+  return new Promise(resolve => {
+    const finish = accepted => { dialog.close(); resolve(accepted); };
+    $('confirm-back').onclick = () => finish(false);
+    $('confirm-proceed').onclick = () => finish(true);
+    dialog.oncancel = event => { event.preventDefault(); finish(false); };
+    dialog.showModal(); $('confirm-back').focus();
+  });
+}
 function renderEvents() {
   $('zone-note').textContent = `Your local time · ${selectedZone().replaceAll('_', ' ')}`;
   const list = $('event-list'); list.replaceChildren();
@@ -88,7 +102,7 @@ function renderEvents() {
     if (e.isOwner && !e.cancelled) {
       for (const operation of ['cancel','delete']) actions.append(action(operation === 'cancel' ? 'Cancel event' : 'Delete event', async () => {
         const text = operation === 'delete' ? `Permanently delete “${e.title}”, including saved responses and media references? Accepted and tentative guests will be notified. Previously sent Telegram copies remain.` : `Cancel “${e.title}”? Accepted and tentative guests will be notified.`;
-        if (!window.confirm(text)) return;
+        if (!await confirmAction(text, operation)) return;
         try { await api(`events/${e.id}/${operation}`,{confirm:true}); await refresh(); notice(operation === 'delete' ? 'Event deleted. Accepted and tentative guests notified.' : 'Event cancelled. Accepted and tentative guests notified.'); }
         catch(error) { notice(error.message); }
       }));
