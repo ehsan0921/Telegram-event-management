@@ -25,6 +25,8 @@ The bot runs while this process is running. For continuous availability, run it 
 
 ## Features
 
+- Super admin Telegram ID `123456789` gets an Admin tab in the Mini App with searchable lists of all events and users, event settings and guest responses. Access is read-only and checked against Telegram’s verified signed identity on every admin request. User profiles are remembered from private bot interactions and Mini App visits; legacy users are inferred from stored events, preferences and conversations. People who have never used the bot cannot be discovered by Telegram ID alone.
+
 - Persistent Create event, My events, and Help buttons. Optional inputs have Skip buttons; names have Use Telegram name; uploads have Finish uploads. Cancel input exits a step, and event pages include navigation and Invite people sharing buttons. Commands remain supported for existing users.
 - Telegram Mini App at `/app`, launched through the bot’s Planner menu or Open planner button. Includes mobile date/time controls, searchable IANA timezone selections, event creation, invitation sharing, and organiser date/time editing.
 - Local timezone preferences are detected on first Mini App use and saved to the Telegram account. Users can change them in the Timezone tab. Event timezone and local display timezone are independent; changing a preference never changes an event’s start time.

@@ -8,6 +8,7 @@ const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 let state = { events: [], preference: {} }, activeEvent = null, createdEvent = null, previewSequence = 0;
 let requestId = crypto.randomUUID();
 let listFilter = 'all';
+let adminData = null, adminMode = 'events';
 let bannerPreviewUrl;
 const bannerUrls = new Map();
 const initData = tg?.initData || '';
@@ -35,7 +36,9 @@ async function api(path, body) {
 function go(tab) {
   const target = tab === 'pending' ? 'events' : tab;
   if (tab === 'events' || tab === 'pending') { listFilter = tab === 'pending' ? 'pending' : 'all'; renderEvents(); }
-  for (const name of ['events', 'create', 'settings']) $(name + '-view').hidden = name !== target;
+  if (tab === 'admin' && !state.user?.isSuperAdmin) return;
+  for (const name of ['events', 'create', 'settings', 'admin']) $(name + '-view').hidden = name !== target;
+  if (tab === 'admin') loadAdmin();
   for (const button of document.querySelectorAll('[data-tab]')) {
     if (button.dataset.tab === tab) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
@@ -137,10 +140,49 @@ async function preview() {
 }
 async function refresh() {
   const data = await api('bootstrap'); state = data;
+  $('admin-tab').hidden = !data.user.isSuperAdmin;
+  document.querySelector('.bottom-nav').classList.toggle('with-admin', data.user.isSuperAdmin);
   $('greeting').textContent = `LET’S MAKE PLANS, ${data.user.firstName.toUpperCase()}`;
   options('local-zone', selectedZone()); $('device-zone').textContent = `Detected on this device: ${deviceZone}`;
   renderEvents(); return data;
 }
+async function loadAdmin() {
+  $('admin-refresh').disabled = true; $('admin-error').hidden = true;
+  try { adminData = await api('admin/overview'); renderAdmin(); }
+  catch (error) { $('admin-error').textContent=error.message; $('admin-error').hidden=false; $('admin-list').replaceChildren(); }
+  finally { $('admin-refresh').disabled=false; }
+}
+function renderAdmin() {
+  if (!adminData) return;
+  $('admin-summary').textContent=`${adminData.events.length} events · ${adminData.users.length} users · ${adminData.events.filter(e=>e.group==='Upcoming events').length} upcoming`;
+  $('admin-events').className=adminMode==='events' ? 'primary' : 'secondary'; $('admin-users').className=adminMode==='users' ? 'primary' : 'secondary';
+  const list=$('admin-list'); list.replaceChildren(); const search=$('admin-search').value.trim().toLowerCase();
+  const userName=u=>[u.firstName,u.lastName].filter(Boolean).join(' ') || u.names?.[0] || `User ${u.id}`;
+  const eventNames=ids=>ids.map(id=>adminData.events.find(e=>e.id===id)?.title || id).join(', ') || 'None';
+  const entries=(adminMode==='events' ? adminData.events : adminData.users).filter(item=>JSON.stringify(item).toLowerCase().includes(search));
+  if (!entries.length) list.append(element('div','No results.','empty'));
+  for (const item of entries) {
+    const card=element('article','','event-card');
+    if (adminMode==='users') {
+      card.append(element('h3',userName(item)),element('p',`Telegram ID: ${item.id}${item.username ? '\n@'+item.username : ''}`),element('p',`Timezone: ${item.timezone || 'Not set'}\nFirst seen: ${item.firstSeen ? new Date(item.firstSeen).toLocaleString() : 'Legacy user'}\nLast seen: ${item.lastSeen ? new Date(item.lastSeen).toLocaleString() : 'Unknown'}`,'small muted'),element('p','Hosting: '+eventNames(item.organised)),element('p','Invited: '+eventNames(item.invited)));
+      if (item.names.length) card.append(element('p','Guest names: '+item.names.join(', '),'small muted'));
+    } else {
+      const owner=adminData.users.find(u=>u.id===item.owner);
+      card.append(element('span',item.group,'tag'),element('h3',item.title),element('p','🗓 '+format(item)),element('p',`Organiser: ${owner ? userName(owner) : item.owner} · ${item.owner}`),element('p','📍 '+item.location),element('p',item.description),element('p',`${item.guests.length} guests · ${item.counts.yes} accepted · ${item.counts.pending} pending approval · ${item.mediaCount} media items`,'counts'));
+      const details=document.createElement('details'); details.append(element('summary','Event settings & guest responses'));
+      details.append(element('p',`Event ID: ${item.id}\nApproval required: ${item.requireApproval ? 'Yes' : 'No'}\nLocation restricted: ${item.hideLocation || item.requireApproval ? 'Yes' : 'No'}\nGuest list: ${item.permissions.guestList ? 'On' : 'Off'} · Uploads: ${item.permissions.uploadMedia ? 'On' : 'Off'} · Shared media: ${item.permissions.viewMedia ? 'On' : 'Off'}\nResponse deadline: ${item.responseDeadline ? format({startsAt:item.responseDeadline}) : 'None'}\nBanner: ${item.hasBanner ? 'Yes' : 'No'}`,'small muted'));
+      if (item.ticketInfo) details.append(element('p','Invitation details: '+item.ticketInfo));
+      for (const guest of item.guests) details.append(element('div',`${guest.name} · ${guest.id}\nResponse: ${{yes:'Accepted',no:'Declined',maybe:'Tentative',later:'Later'}[guest.status] || guest.status}${guest.approval ? ' · '+guest.approval : ''}\nPhone: ${guest.phone || 'Not shared'}\nComment: ${guest.comment || 'None'}${guest.answers.map(a=>'\n'+a.question+': '+(a.answer || 'Skipped')).join('')}`,'admin-guest'));
+      if (!item.guests.length) details.append(element('p','No guests yet.','muted'));
+      card.append(details);
+    }
+    list.append(card);
+  }
+}
+$('admin-search').oninput=renderAdmin;
+$('admin-events').onclick=()=>{adminMode='events';renderAdmin();};
+$('admin-users').onclick=()=>{adminMode='users';renderAdmin();};
+$('admin-refresh').onclick=loadAdmin;
 for (const b of document.querySelectorAll('[data-tab]')) b.onclick = () => { notice(''); b.dataset.tab === 'create' ? setupForm() : go(b.dataset.tab); };
 $('hero-create').onclick = () => setupForm();
 $('banner').onchange = () => { if (bannerPreviewUrl) URL.revokeObjectURL(bannerPreviewUrl); const file=$('banner').files[0]; $('banner-preview').hidden=!file; if (file) { bannerPreviewUrl=URL.createObjectURL(file); $('banner-preview').src=bannerPreviewUrl; } };

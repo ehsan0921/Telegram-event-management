@@ -1,5 +1,6 @@
 import { mutateState, BusyError } from './worker-store.js';
 import { miniApi } from './mini-api.js';
+import { rememberUser } from './admin.js';
 import { sendDueReminders } from './reminders.js';
 
 export async function authorized(request, secret) {
@@ -22,6 +23,8 @@ async function telegram(env, method, params) {
 
 export async function processUpdate(env, update) {
   try {
+    const user = update.callback_query?.from || (update.message?.chat?.type === 'private' ? update.message.from : null);
+    if (user) await rememberUser(env, user);
     await mutateState(env, (data, bot) => bot.handle(update), update.update_id);
     return new Response('OK');
   } catch (e) {

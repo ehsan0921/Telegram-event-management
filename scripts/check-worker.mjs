@@ -52,6 +52,9 @@ try {
     return { status: response.status, data: await response.json() };
   }
   assert.equal((await mf.dispatchFetch('https://test/api/bootstrap')).status, 401);
+  assert.equal((await api('admin/overview',null,123)).status,403);
+  assert.equal((await api('bootstrap')).data.user.isSuperAdmin,false);
+  assert.equal((await api('bootstrap',null,123456789)).data.user.isSuperAdmin,true);
   assert.equal((await api('bootstrap')).data.events.length, 1);
   assert.equal((await api('bootstrap', null, 456)).data.events.length, 0);
   assert.equal((await api('preferences', { timezone: 'America/New_York' })).status, 200);
@@ -108,5 +111,16 @@ try {
   assert.equal((await mf.dispatchFetch(`https://test/api/events/${privateId}/banner`,{headers:{Authorization:'tma '+initData(789)}})).status,403);
   const image=await mf.dispatchFetch(`https://test/api/events/${privateId}/banner`,{headers:{Authorization:'tma '+initData(456)}});
   assert.equal(image.status,200); assert.equal(image.headers.get('Content-Type'),'image/jpeg'); assert.equal((await image.arrayBuffer()).byteLength,3);
+  const overview=await api('admin/overview',null,123456789);
+  assert.equal(overview.status,200);
+  assert.equal(overview.data.events.length,(await api('bootstrap')).data.events.length);
+  assert.equal(overview.data.events.find(e=>e.id===privateId).location,'SECRET LOCATION');
+  assert.equal(overview.data.events.find(e=>e.id===privateId).guests[0].id,456);
+  assert.ok(overview.data.users.some(u=>u.id===123 && u.organised.includes(privateId)));
+  assert.ok(overview.data.users.some(u=>u.id===456 && u.invited.includes(privateId)));
+  assert.ok(overview.data.users.some(u=>u.id===123456789 && u.firstName==='Tester'));
+  assert.doesNotMatch(JSON.stringify(overview.data),/sessionToken|test-secret|test-banner|query_id/);
+  assert.equal((await api('admin/overview',null,456)).status,403);
+  assert.equal((await api('admin/overview',{id:123456789},456)).status,403);
   console.log('Worker integration passed: authentication, timezone/date conversion, opt-in guest settings, private data, deadlines, approvals/tickets, and chat picker continuation. Telegram mocked.');
 } finally { await mf.dispose(); }

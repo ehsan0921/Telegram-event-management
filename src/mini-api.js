@@ -1,4 +1,5 @@
 import { authenticate } from './mini-auth.js';
+import { isSuperAdmin, rememberUser, adminOverview } from './admin.js';
 import { schedule, timezone, InputError } from './time.js';
 import { mutateState, BusyError } from './worker-store.js';
 import { randomBytes } from 'node:crypto';
@@ -57,6 +58,13 @@ export async function miniApi(request, env) {
   const user = authenticate(request.headers.get('Authorization')?.replace(/^tma /, ''), env.TELEGRAM_BOT_TOKEN);
   if (!user) return respond({ error: 'Open the planner inside Telegram. If it was open for a while, close and reopen it.' }, 401);
   const path = new URL(request.url).pathname;
+  if (path.startsWith('/api/admin')) {
+    if (!isSuperAdmin(user)) return respond({ error: 'Super admin access required.' }, 403);
+    if (path !== '/api/admin/overview' || request.method !== 'GET') return respond({ error: 'Not found.' }, 404);
+    await rememberUser(env, user);
+    const { results } = await env.DB.prepare("SELECT kind,id,data FROM records WHERE kind IN ('events','users','preferences','sessions')").all();
+    return respond(adminOverview(results));
+  }
   const bannerMatch = path.match(/^\/api\/events\/([a-f0-9]{16})\/banner$/);
   if (bannerMatch && ['GET', 'POST'].includes(request.method)) {
     const row = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(bannerMatch[1]).first();
@@ -93,12 +101,13 @@ export async function miniApi(request, env) {
     } catch (error) { console.error('banner_failed', error.name); return respond({ error: error instanceof BusyError ? error.message : 'Could not load or save the banner. Please try again.' }, 503); }
   }
   if (path === '/api/bootstrap' && request.method === 'GET') {
+    await rememberUser(env, user);
     const { results } = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND (json_extract(data,'$.owner')=? OR json_type(data,?) IS NOT NULL)").bind(user.id, `$.guests."${user.id}"`).all();
     const preference = await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(user.id)).first();
     const session = await env.DB.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(user.id)).first();
     const s = session ? JSON.parse(session.data) : null;
     const pickerSession = s && (s.step === 'when' || s.step === 'permissions' || (s.step === 'edit' && s.field === 'when')) ? { token: s.token, event: s.event || null, deadlineDate: s.draft?.deadlineDate || '', deadlineTime: s.draft?.deadlineTime || '', timezone: s.draft?.deadlineTimezone || s.draft?.timezone || null } : null;
-    return respond({ user: { firstName: user.first_name || 'Guest' }, preference: preference ? JSON.parse(preference.data) : {}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
+    return respond({ user: { firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user) }, preference: preference ? JSON.parse(preference.data) : {}, session: pickerSession, events: results.map(r => publicEvent(JSON.parse(r.data), user.id, env.BOT_USERNAME)) });
   }
   if (request.method !== 'POST') return respond({ error: 'Not found' }, 404);
   const raw = await request.text();
