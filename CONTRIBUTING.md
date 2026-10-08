@@ -4,7 +4,7 @@ Bug fixes, accessibility improvements, clearer documentation and focused feature
 
 ## Set up development
 
-Use Node.js 22 or newer. Fork and clone the repository, then install the locked dependencies:
+Use Node.js 22 or newer. Fork the [canonical repository](https://github.com/ehsan0921/Telegram-event-management), clone your fork, and create a focused branch before editing. Then install the locked dependencies:
 
 ```sh
 npm ci
@@ -26,6 +26,8 @@ Open `/app` on the local server for the interface. Private data still requires s
 ## Report bugs and suggest features
 
 Search existing issues first. For a bug, include what you expected, what happened, concise reproduction steps and the relevant Telegram client/browser and operating system. Screenshots help for interface problems; replace real names, phone numbers, private venues, links and payment information with fictional data.
+
+The [bug report template](.github/ISSUE_TEMPLATE/bug_report.md) provides a starting point. Documentation and accessibility fixes are good first contributions; please do not open empty issues or automated promotional pull requests.
 
 For a feature, describe the organiser or guest problem and a concrete example of the desired flow. Keep broader changes open for discussion before investing in a large implementation.
 
