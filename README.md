@@ -23,6 +23,10 @@ For clubs, meetups, workshops and community gatherings. Hosts and guests use Tel
 
 Real app screens, captured locally with fictional events and mocked Telegram calls:
 
+<img src="docs/screenshots/walkthrough.gif" width="300" alt="Animated XEvents walkthrough showing event creation, the guest list, check-in and a guest ticket">
+
+[Open the animated walkthrough](docs/screenshots/walkthrough.gif) · [Capture details and limitations](docs/demo.md)
+
 <table>
 <tr><td><img src="docs/screenshots/home.jpg" width="240" alt="XEvents home with the fictional Riverside Club Picnic event"></td><td><img src="docs/screenshots/create-event.jpg" width="240" alt="Event creation form with a fictional photography walk"></td></tr>
 <tr><td>Home and upcoming plans</td><td>Create an event</td></tr>
@@ -30,7 +34,7 @@ Real app screens, captured locally with fictional events and mocked Telegram cal
 <tr><td>Manage RSVPs and group counts</td><td>Check in guests</td></tr>
 </table>
 
-**[Watch the 25-second walkthrough](docs/screenshots/walkthrough.mp4)** · [Animated preview](docs/screenshots/walkthrough.gif) · [Capture details and limitations](docs/demo.md)
+[Download the optional MP4 version](docs/screenshots/walkthrough.mp4)
 
 The walkthrough is a silent sequence of actual local UI captures, not a live Telegram recording. The public bot is a live service. For experiments, use your own development bot and fictional data following the [self-hosting guide](docs/self-hosting.md).
 
