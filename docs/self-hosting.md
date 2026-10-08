@@ -18,8 +18,8 @@ Use a separate development bot when testing. Telegram sends a bot's updates to o
 ## Install and check the source
 
 ```sh
-git clone https://github.com/ehsan0921/XEvents.git
-cd XEvents
+git clone https://github.com/ehsan0921/Telegram-event-management.git
+cd Telegram-event-management
 npm ci
 npm test
 npm run test:worker

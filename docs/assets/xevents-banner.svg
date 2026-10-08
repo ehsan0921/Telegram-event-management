@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+<title id="title">XEvents — Events happen here.</title><desc id="desc">Open-source event management inside Telegram. Create, invite, RSVP and check in.</desc>
+<rect width="1280" height="640" rx="24" fill="#f6f7f2"/>
+<circle cx="1170" cy="80" r="230" fill="#def0e6"/>
+<rect x="64" y="64" width="88" height="88" rx="24" fill="#126b5b"/>
+<text x="108" y="127" text-anchor="middle" font-family="Arial,sans-serif" font-size="62" font-weight="700" fill="white">X</text>
+<text x="176" y="126" font-family="Arial,sans-serif" font-size="58" font-weight="700" fill="#126b5b">XEvents</text>
+<text x="64" y="260" font-family="Arial,sans-serif" font-size="70" font-weight="700" fill="#153c33">Events happen here.</text>
+<text x="68" y="322" font-family="Arial,sans-serif" font-size="32" fill="#476258">Open-source event management inside Telegram.</text>
+<g font-family="Arial,sans-serif" font-size="27" font-weight="700" fill="#126b5b">
+<rect x="64" y="390" width="258" height="80" rx="20" fill="#def0e6"/><text x="92" y="440">01  Create</text>
+<rect x="342" y="390" width="258" height="80" rx="20" fill="#def0e6"/><text x="370" y="440">02  Invite</text>
+<rect x="620" y="390" width="258" height="80" rx="20" fill="#def0e6"/><text x="648" y="440">03  RSVP</text>
+<rect x="898" y="390" width="318" height="80" rx="20" fill="#126b5b"/><text x="926" y="440" fill="white">04  Check in</text></g>
+<text x="68" y="560" font-family="Arial,sans-serif" font-size="26" fill="#476258">Telegram Mini App  ·  MIT licensed  ·  Self-hostable</text>
+</svg>
