@@ -1,6 +1,21 @@
 # Product screenshots
 
-This directory is reserved for real XEvents screenshots. No product screenshots are included yet. Capture the running Telegram bot and Mini App before adding images to the main README; branding artwork and mockups are not substitutes for product screenshots.
+This directory includes real XEvents Mini App captures from an isolated local Worker/D1 fixture, using fictional users and events. Telegram identity is simulated locally and all outbound calls are mocked. These are not live Telegram chat screenshots. See [demo provenance](../demo.md).
+
+## Included captures
+
+| File | Actual captured state |
+| --- | --- |
+| [home.jpg](home.jpg) | Organiser home and upcoming fictional picnic |
+| [create-event.jpg](create-event.jpg) | Filled photography-walk creation form |
+| [event-created.jpg](event-created.jpg) | Successful creation through the Mini App |
+| [guest-list.jpg](guest-list.jpg) | Seeded accepted and unanswered named invitations |
+| [guest-ticket.jpg](guest-ticket.jpg) | Fictional guest ticket after check-in |
+| [check-in-keypad.jpg](check-in-keypad.jpg) | Organiser keypad awaiting a guest code |
+| [check-in-result.jpg](check-in-result.jpg) | Successful two-person group check-in through the real local API |
+| [walkthrough.mp4](walkthrough.mp4) / [walkthrough.gif](walkthrough.gif) | 25-second silent sequence of captures |
+
+The names and numeric identities displayed are fictional test fixtures. Published codes belong only to the disposable local database and cannot admit anyone to a hosted event. No QR codes or private hosted links are included. Live Telegram RSVP-chat and optional QR-flow captures remain future work.
 
 ## Four captures for the README
 

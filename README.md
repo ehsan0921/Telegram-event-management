@@ -19,7 +19,20 @@ For clubs, meetups, workshops and community gatherings. Hosts and guests use Tel
 3. For your own event, choose a shared ticket-booking link or a named guest list with personal RSVP links.
 4. Manage replies and guests, then use **Check in guests** on event day.
 
-The public bot is a live service. For experiments, use your own development bot and fictional data following the [self-hosting guide](docs/self-hosting.md). Product screenshots are still pending; the artwork above illustrates the workflow. See the [real screenshot capture plan](docs/screenshots/README.md).
+### A look inside
+
+Real app screens, captured locally with fictional events and mocked Telegram calls:
+
+<table>
+<tr><td><img src="docs/screenshots/home.jpg" width="240" alt="XEvents home with the fictional Riverside Club Picnic event"></td><td><img src="docs/screenshots/create-event.jpg" width="240" alt="Event creation form with a fictional photography walk"></td></tr>
+<tr><td>Home and upcoming plans</td><td>Create an event</td></tr>
+<tr><td><img src="docs/screenshots/guest-list.jpg" width="240" alt="Organiser guest list with fictional accepted and unanswered invitations"></td><td><img src="docs/screenshots/check-in-result.jpg" width="240" alt="Successful local check-in for Sam Example and a two-person group"></td></tr>
+<tr><td>Manage RSVPs and group counts</td><td>Check in guests</td></tr>
+</table>
+
+**[Watch the 25-second walkthrough](docs/screenshots/walkthrough.mp4)** · [Animated preview](docs/screenshots/walkthrough.gif) · [Capture details and limitations](docs/demo.md)
+
+The walkthrough is a silent sequence of actual local UI captures, not a live Telegram recording. The public bot is a live service. For experiments, use your own development bot and fictional data following the [self-hosting guide](docs/self-hosting.md).
 
 ## Features
 
