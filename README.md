@@ -51,6 +51,8 @@ The walkthrough is a silent sequence of actual local UI captures, not a live Tel
 
 QR codes are optional and off for new events. Stars payouts to organisers are manual. Direct card processing and calendar synchronisation are not implemented.
 
+Share photos with attendees in one event collection, with no built-in photo-count limit. Telegram and hosting limits apply; Mini App downloads support files up to 20 MB, with **Send to Telegram** available for larger files.
+
 [Full feature guide](docs/features.md) · [Invitations and guest counts](docs/invitations.md) · [Payments and refunds](docs/payments.md)
 
 ## Run XEvents yourself
