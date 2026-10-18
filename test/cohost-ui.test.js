@@ -74,6 +74,13 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
       event=project({...event,cohostLinks:links,cohostVersion:(++revision).toString(16).padStart(16,'0')});
       return response({event});
     }
+    if(path==='/api/collections'){
+      if(eventSaveHold){const hold=eventSaveHold;eventSaveHold=null;await hold;}
+      if(scheduleError)return response({error:scheduleError},400);
+      event={...event,kind:'photos',title:body.title,showUploaders:body.showUploaders,photoLinks:{viewer:'https://t.me/test?start=p_fictional',contributor:'https://t.me/test?start=u_fictional'}};
+      return response({event});
+    }
+    if(/^\/api\/collections\/[a-f0-9]{16}\/settings$/.test(path)){event={...event,showUploaders:body.showUploaders};return response({event});}
     if(path==='/api/events'){if(eventSaveHold){const hold=eventSaveHold;eventSaveHold=null;await hold;}event={...event,...body};return response({event});}
     if(path.endsWith('/schedule')){if(eventSaveHold){const hold=eventSaveHold;eventSaveHold=null;await hold;}if(scheduleError)return response({error:scheduleError},400);event={...event,...body};return response({event});}
     if(path==='/api/preview')return response({startsAt:event.startsAt,timezone:event.timezone});
@@ -93,6 +100,36 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
   const findEntry=id=>ids.get('cohost-list').children.find(node=>node.dataset.linkId===id);
   return {ids,tabs,calls,errors,errorContexts,copied,telegramLinks,telegramStartupCalls,scanCallbacks,findButton,findEntry,descendants,setClipboardMode:value=>{clipboardMode=value;},setEvent:value=>{event=value;},getEvent:()=>event,setInvitationError:value=>{invitationError=value;},holdNextInvitationMutation:()=>{let release;invitationHold=new Promise(resolve=>{release=resolve;});return release;},holdNextEventRead:()=>{let release;eventReadHold=new Promise(resolve=>{release=resolve;});return release;},holdNextEventSave:()=>{let release;eventSaveHold=new Promise(resolve=>{release=resolve;});return release;},holdNextTicket:()=>{let release;ticketHold=new Promise(resolve=>{release=resolve;});return release;},holdNextTicketCheck:()=>{let release;ticketCheckHold=new Promise(resolve=>{release=resolve;});return release;},pendingTimers:()=>timers.size,advanceTime:milliseconds=>{clock.now+=milliseconds;for(const [id,timer] of [...timers])if(timer.at<=clock.now){timers.delete(id);timer.callback();}}};
 }
+
+test('photo-only Mini App form hides event fields, creates both role links and shares each exact role',async()=>{
+  const f=await harness(eventFixture());f.ids.get('hero-create').onclick();
+  const panel=f.ids.get('photo-create-panel');panel.open=true;panel.ontoggle();
+  assert.equal(f.ids.get('event-form').hidden,true);
+  assert.match(f.ids.get('form-title').textContent,/memories/);
+  f.ids.get('photo-title').value='Fictional shared memories';
+  f.ids.get('photo-show-uploaders').checked=false;
+  await f.ids.get('photo-form').onsubmit({preventDefault(){}});
+  const call=f.calls.find(call=>call.path==='/api/collections');
+  assert.equal(call.body.title,'Fictional shared memories');assert.equal(call.body.showUploaders,false);assert.equal(call.body.date,undefined);assert.ok(call.body.requestId);
+  assert.equal(f.ids.get('photo-links').hidden,false);assert.equal(f.ids.get('photo-create').disabled,false);
+  for(const role of ['viewer','contributor']){
+    f.findButton('photo-links','Share '+role+' link').onclick();
+    assert.equal(new URL(f.telegramLinks.at(-1)).searchParams.get('url'),f.getEvent().photoLinks[role]);
+  }
+  const toggle=f.descendants(f.ids.get('photo-links')).find(node=>node.type==='checkbox');
+  assert.equal(toggle.checked,false);toggle.checked=true;await toggle.onchange();
+  assert.equal(f.calls.find(call=>call.path.endsWith('/settings')).body.showUploaders,true);
+  assert.equal(f.getEvent().showUploaders,true);
+  panel.open=false;panel.ontoggle();assert.equal(f.ids.get('event-form').hidden,false);
+});
+
+test('failed photo-only creation keeps a visible error and retries with the same request identity',async()=>{
+  const f=await harness(eventFixture(),{scheduleError:'Fictional save failure'});f.ids.get('photo-title').value='Memories';
+  for(let attempt=0;attempt<2;attempt++)await f.ids.get('photo-form').onsubmit({preventDefault(){}});
+  assert.equal(f.ids.get('photo-error').hidden,false);assert.match(f.ids.get('photo-error').textContent,/Fictional save failure/);
+  assert.equal(f.ids.get('photo-create').disabled,false);
+  const calls=f.calls.filter(call=>call.path==='/api/collections');assert.equal(calls.length,2);assert.equal(calls[0].body.requestId,calls[1].body.requestId);
+});
 
 for(const method of ['ready','expand','onEvent'])test('a Telegram '+method+' bridge failure keeps Home, My events and Create usable',async()=>{
   const initial=eventFixture(),message='Fictional '+method+' bridge failure';

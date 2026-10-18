@@ -88,6 +88,10 @@ Default reminders wait for required approval and payment. New default reminders 
 
 ## Shared media
 
+Choose **Photo sharing only** on the Mini App Create page, or use **Photo sharing** on the bot keyboard, to create a standalone collection with just a name. No event date, tickets or RSVP is needed. Each collection has a **viewer link** for browsing and a separate **contributor link** for browsing and uploading photos, videos and files. Share the appropriate link for the access you want to give. Opening either link does not add the person to an event guest list.
+
+The collection owner can turn **Show who uploaded media** on or off in the Mini App or with the bot's **Uploader names** button. Names are shown by default. Turning this off hides uploader attribution in gallery responses, previews and bot captions, including existing uploads; internal upload records remain intact. User-written captions, filenames and file contents remain visible.
+
 Hosts can separately allow guest uploads and gallery browsing. Collect photos, videos, and files through Telegram, then use **Shared media** in the Mini App to browse previews. Supported images sent as documents and videos can use Telegram thumbnails or supported file previews.
 
 The gallery supports **Save** and **Send to my Telegram**. Sending delivers the chosen item to the user's bot chat. Mini App file downloads are capped at 20 MB; larger files can be sent to Telegram for retrieval in chat. Preview and download support depends on the file format and Telegram's available file data.

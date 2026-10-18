@@ -27,6 +27,7 @@
       <div id="event-list" aria-live="polite"><div class="empty">Loading your plans…</div></div>
     </section>
     <section id="create-view" class="view" hidden>
+      <details class="panel" id="photo-create-panel"><summary>📷 Photo sharing only</summary><p>Create a collection without an event. Share a viewer link to browse, or a contributor link to browse and add photos, videos and files.</p><form id="photo-form"><label for="photo-title">Collection name</label><input id="photo-title" maxlength="100" required placeholder="Our shared memories"><label class="check-option"><input type="checkbox" id="photo-show-uploaders" checked><span>Show who uploaded media<span class="check-note">Show uploader names in the gallery. Turn off to hide names; captions and file contents stay visible.</span></span></label><button type="submit" id="photo-create">Create photo-sharing links</button><p id="photo-error" role="alert" hidden></p></form><div id="photo-links" hidden></div></details>
       <span class="eyebrow">BRING EVERYONE TOGETHER</span><h1 id="form-title">Make a plan.</h1><p class="muted" id="form-description">Pick a date. Share an invite. Let the good times follow.</p>
       <p id="payment-owner-note" class="notice" hidden>You’re editing as co-host. Payment settings stay with the event owner.</p>
       <div id="edit-checkin-panel" class="edit-checkin-panel" hidden><span class="small muted">At the door</span><button type="button" id="edit-checkin" class="secondary">🎟 Check in guests</button></div>

@@ -149,7 +149,7 @@ test('native App menu stays available without duplicate App buttons or stale key
   const f=fixture();f.bot.appUrl='https://example.test/app';
   await f.msg(1,'/start');
   const entries=f.calls.at(-1).reply_markup.keyboard.flat();
-  assert.deepEqual(entries.map(item=>item.text),['🎉 Create event','📅 My events','❓ Help']);
+  assert.deepEqual(entries.map(item=>item.text),['🎉 Create event','📅 My events','📷 Photo sharing','❓ Help']);
   assert.equal(entries.some(item=>item.web_app || item.text==='App'),false);
   assert.ok(f.calls.some(c=>c.method==='setChatMenuButton' && c.menu_button.text==='App' && c.menu_button.web_app.url===f.bot.appUrl));
   for(const text of ['App','📱 Open app','📱 Open planner','/start app']){

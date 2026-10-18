@@ -62,11 +62,13 @@ function reminders(bot,id,s){return choices(bot,id,s,'chat-reminders','Default r
 function durationCard(bot,id,s){return choices(bot,id,s,'chat-duration','How long is the event?',[[['1 hour','duration-set',60],['2 hours','duration-set',120]],[['3 hours','duration-set',180],['4 hours','duration-set',240]],[['No finish time','duration-set',0],['Other duration','custom-duration']],[['Back','back'],['Cancel','cancel']]]);}
 function deadlineCard(bot,id,s){return choices(bot,id,s,'chat-deadline',s.draft.responseDeadline?'Respond by: '+eventTime({startsAt:s.draft.responseDeadline,timezone:s.draft.deadlineTimezone || s.draft.timezone}):'No response deadline.',[[['Set deadline','deadline-set'],['No deadline','deadline-clear']],[['Back','back'],['Cancel','cancel']]]);}
 
-export function startChatCreation(bot,id){
+export async function startChatCreation(bot,id){
   const s={flow:'chat-create',step:'chat-title',token:randomBytes(6).toString('hex'),draft:{invitationMode:'tickets',oneTimeInvite:false,isPublic:false,requireApproval:false,askParticipantCount:false,askPhone:false,askComments:false,qrEnabled:false,permissions:{guestList:false,uploadMedia:false,viewMedia:false},description:'',inviteMessage:'',questions:[],location:'',endMode:'none',defaultReminder:0}};
   bot.session(id,s);
+  await photoChoice(bot,id);
   return bot.send(id,'Event name?',{keyboard:[[{text:'✖️ Cancel input'}]],resize_keyboard:true});
 }
+function photoChoice(bot,id){return bot.send(id,'Or create only a photo-sharing link — no event details needed.',{inline_keyboard:[[{text:'📷 Photo sharing only',callback_data:'photos-new'}]]});}
 function back(bot,id,s){
   if(s.step==='chat-title')return s.draft.title?startPick(bot,id,s):bot.send(id,'Event name? Or tap Cancel input.');
   if(['chat-date','chat-custom-date'].includes(s.step))return s.picking==='deadline' || s.editingSchedule?options(bot,id,s):ask(bot,id,s,'chat-title','Event name?');
