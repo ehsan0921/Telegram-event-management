@@ -66,6 +66,8 @@ The bot's main keyboard has two rows:
 
 ### Shared media albums
 
+**My stuff → Media albums** includes standalone albums and galleries from your accessible events when media viewing is enabled, even before any files have been uploaded. Events with media viewing turned off do not appear in this list. Event galleries keep their existing access and upload permissions.
+
 Create an album without an event date, guest list, tickets or RSVPs. In chat, choose **Create → Media album** and enter a name. In the Mini App, choose **Create**, then the media option. Share the resulting links:
 
 - **Viewer link:** lets anyone holding it browse the album.
