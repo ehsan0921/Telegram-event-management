@@ -978,10 +978,30 @@ async function refreshEditGuestList(){
     activeEvent={...activeEvent,invitees:latest.invitees,invitationsVersion:latest.invitationsVersion,initialGuestNames:list};
   }catch(error){notice(error.message);}
 }
-for (const b of document.querySelectorAll('[data-tab]')) b.onclick = async () => { notice(''); if(b.dataset.tab==='create' && (!formReady || $('event-form').hidden))setupForm();else {go(b.dataset.tab);if(b.dataset.tab==='create')await refreshEditGuestList();} };
+let creationFromHero=false;
+function requestCreation(fromHero=false){
+  if(formSaving){notice('Your event is saving. Please wait.');return;}
+  const dialog=$('create-kind-dialog');if(dialog.open)return;
+  creationFromHero=fromHero===true;
+  dialog.showModal();$('create-kind-event').focus();
+}
+async function chooseCreation(kind){
+  if(formSaving)return;
+  $('create-kind-dialog').close();
+  if(!formReady || activeEvent && (creationFromHero || kind==='photos') || ($('event-form').hidden && !$('photo-create-panel').open))setupForm();
+  else go('create');
+  $('photo-create-panel').open=kind==='photos';
+  $('photo-create-panel').ontoggle();
+  (kind==='photos'?$('photo-title'):$('title')).focus();
+  if(kind==='event')await refreshEditGuestList();
+}
+$('create-kind-event').onclick=()=>chooseCreation('event');
+$('create-kind-photos').onclick=()=>chooseCreation('photos');
+$('create-kind-close').onclick=()=>$('create-kind-dialog').close();
+for (const b of document.querySelectorAll('[data-tab]')) b.onclick = async () => { notice('');if(b.dataset.tab==='create')requestCreation();else go(b.dataset.tab); };
 $('home-brand').onclick=event=>{event.preventDefault();go('home');};
 $('app-close').onclick=()=>{if(formSaving)return;pageNavigationGeneration++;dismissPendingMedia?.();dismissTicket();if((compactPicker || currentView==='home') && initData && typeof tg?.close==='function'){try{tg.close();}catch(error){notice(error.message);}}else if(compactPicker)notice('Close this window to return to Telegram.');else go('home');};updateAppClose();
-$('hero-create').onclick = () => setupForm();
+$('hero-create').onclick = () => requestCreation(true);
 $('banner').onchange = () => { ++bannerLoadGeneration; if (bannerPreviewUrl) URL.revokeObjectURL(bannerPreviewUrl); const file=$('banner').files[0]; $('banner-preview').hidden=!file; if (file) { bannerPreviewUrl=URL.createObjectURL(file); $('banner-preview').src=bannerPreviewUrl; } };
 $('cancel-edit').onclick = () => {if(formSaving)return;formReady=false;go('events');};
 $('edit-cancel-event').onclick=()=>!formSaving && activeEvent && cancelEvent(activeEvent);

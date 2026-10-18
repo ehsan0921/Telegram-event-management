@@ -11,6 +11,7 @@ test('editing fetches fresh details, preserves all attendee count modes and invi
     constructor(){this.children=[];this.dataset={};this.value='';this.files=[];this.classList={toggle(){},add(){},remove(){}};}
     append(...items){this.children.push(...items);this.firstChild=this.children[0];}
     replaceChildren(...items){this.children=[];this.append(...items);}
+    showModal(){this.open=true;}close(){this.open=false;this.onclose?.();}
     setAttribute(){} removeAttribute(){} addEventListener(){} reset(){} focus(){} setCustomValidity(text){this.validation=text;} querySelector(){return new El();}
   }
   const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
@@ -38,6 +39,7 @@ test('editing fetches fresh details, preserves all attendee count modes and invi
   tabs.find(b=>b.dataset.tab==='settings').onclick();
   event.initialGuestNames='Alex = 3\nSam = ?\nTaylor = 2!\nJordan = 4*\nMorgan = 2';
   await tabs.find(b=>b.dataset.tab==='create').onclick();
+  await ids.get('create-kind-event').onclick();
   assert.equal(ids.get('title').value,'Unfinished event edit');
   assert.equal(ids.get('invite-message').value,'Come celebrate with us.');
   assert.equal(ids.get('guest-names').value,event.initialGuestNames);
@@ -45,6 +47,7 @@ test('editing fetches fresh details, preserves all attendee count modes and invi
   tabs.find(b=>b.dataset.tab==='settings').onclick();
   event.initialGuestNames+='\nAnother server guest';
   await tabs.find(b=>b.dataset.tab==='create').onclick();
+  await ids.get('create-kind-event').onclick();
   assert.ok(ids.get('guest-names').value.endsWith('Unsaved guest = 2'));
   // Updating the photo must not overwrite text that has not been saved yet.
   ids.get('profile-name').value='Unsaved profile name';ids.get('profile-phone').value='+61 400 000 000';

@@ -27,7 +27,11 @@ test('photo-only creation works from the keyboard and from Create event without 
     assert.equal(e.kind,'photos');assert.equal(e.startsAt,undefined);assert.equal(e.isPublic,false);assert.deepEqual(e.guests,{});
     assert.notEqual(e.viewToken,e.uploadToken);
     const card=f.calls.at(-1),buttons=card.reply_markup.inline_keyboard.flat();
-    assert.ok(buttons.some(b=>b.text==='Share viewer link'));assert.ok(buttons.some(b=>b.text==='Share contributor link'));
+    for(const role of ['viewer','contributor']){
+      const copy=buttons.find(b=>b.text===`Copy ${role} link`);
+      assert.equal(copy.copy_text.text,photoLinks(e,'FictionalPhotosBot')[role]);
+      assert.equal(copy.url,undefined);assert.equal(copy.callback_data,undefined);
+    }
     assert.ok(!buttons.some(b=>/ticket|RSVP|Accept/.test(b.text)));
     assert.ok(publicEvent(e,1,'FictionalPhotosBot').photoLinks);
     assert.equal(publicEvent(e,2,'FictionalPhotosBot').photoLinks,undefined);

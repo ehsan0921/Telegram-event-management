@@ -109,7 +109,7 @@ export class Bot {
     if (!this.appUrl && this.mediaCan(e,id,'viewMedia')) rows.push([button('🗂 Shared media',`m:${e.id}:0`)]);
     if(e.kind==='photos' && e.owner===id){
       const links=photoLinks(e,this.username);
-      rows.push([{text:'Share viewer link',url:`https://t.me/share/url?url=${encodeURIComponent(links.viewer)}`}],[{text:'Share contributor link',url:`https://t.me/share/url?url=${encodeURIComponent(links.contributor)}`}]);
+      rows.push([{text:'Copy viewer link',copy_text:{text:links.viewer}}],[{text:'Copy contributor link',copy_text:{text:links.contributor}}]);
       rows.push([button(showsUploaders(e)?'Uploader names: shown · Hide':'Uploader names: hidden · Show',`photo-names:${e.id}`)]);
     }
     rows.push([button(menu.home,'nav:home')]);
