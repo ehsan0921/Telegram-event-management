@@ -76,7 +76,7 @@ test('Home provides app navigation shortcuts alongside event cards',()=>{
   const section=html.slice(html.indexOf('id="home-view"'),html.indexOf('id="events-view"'));
   const shortcuts=section.match(/<nav\b[^>]*class="[^"]*home-shortcuts[^"]*"[^>]*>([\s\S]*?)<\/nav>/)?.[1];
   assert.ok(shortcuts,'Home should have its own shortcut navigation.');
-  for(const [tab,label] of [['events','My events'],['explore','Explore events'],['create','Create event']]){
+  for(const [tab,label] of [['events','My events'],['explore','Explore events'],['create','Create']]){
     assert.match(shortcuts,new RegExp('<button\\b[^>]*data-tab="'+tab+'"[^>]*>[^<]*'+label+'<\\/button>'));
   }
 });

@@ -6,6 +6,8 @@ import {setupGallery} from '../public/gallery.js';
 import {setupEventActions} from '../public/event-actions.js';
 import {setupGuestMessages} from '../public/guest-messages.js';
 
+function startEvent(f){f.ids.get('hero-create').onclick();f.ids.get('create-kind-event').onclick();}
+
 const eventFixture=fields=>({id:'0123456789abcdef',title:'Club evening',location:'Club house',description:'Meet the team',isOwner:true,isManager:true,isCoHost:false,cohosts:[],cohostLinks:[],cohost:null,cohostInviteUrl:null,cohostVersion:'0000000000000000',invitationMode:'named',invitees:[{name:'Alex',participants:2,url:'https://t.me/test?start=guest'}],group:'Upcoming events',upcoming:true,startsAt:'2099-10-24T08:00:00Z',timezone:'Australia/Sydney',localDate:'2099-10-24',localTime:'18:00',permissions:{},qrEnabled:true,uploadLink:'https://t.me/test?start=upload',paymentMethod:'stars',starPrice:100,starPricing:'person',paymentTerms:'Admission for one person.',...fields});
 const pendingLink=(id,label)=>({id,label,status:'pending',createdAt:'2026-10-07T00:00:00Z',cohost:null,url:'https://t.me/test?start=cohost_'+id});
 const activeLink=(id,label,person)=>({...pendingLink(id,label),status:'active',url:null,cohost:{id:2,name:'Alex',username:'alex',joinedAt:'2026-10-07T00:00:00Z',...person}});
@@ -101,9 +103,33 @@ async function harness(initial,{scheduleError,clipboardMode='ok',search='',invit
   return {ids,tabs,calls,errors,errorContexts,copied,telegramLinks,telegramStartupCalls,scanCallbacks,findButton,findEntry,descendants,setClipboardMode:value=>{clipboardMode=value;},setEvent:value=>{event=value;},getEvent:()=>event,setInvitationError:value=>{invitationError=value;},holdNextInvitationMutation:()=>{let release;invitationHold=new Promise(resolve=>{release=resolve;});return release;},holdNextEventRead:()=>{let release;eventReadHold=new Promise(resolve=>{release=resolve;});return release;},holdNextEventSave:()=>{let release;eventSaveHold=new Promise(resolve=>{release=resolve;});return release;},holdNextTicket:()=>{let release;ticketHold=new Promise(resolve=>{release=resolve;});return release;},holdNextTicketCheck:()=>{let release;ticketCheckHold=new Promise(resolve=>{release=resolve;});return release;},pendingTimers:()=>timers.size,advanceTime:milliseconds=>{clock.now+=milliseconds;for(const [id,timer] of [...timers])if(timer.at<=clock.now){timers.delete(id);timer.callback();}}};
 }
 
+test('every Create entry opens a choice popup and dismissing it leaves drafts unchanged',async()=>{
+  const f=await harness(eventFixture());
+  const entries=[f.ids.get('hero-create'),...f.tabs.filter(tab=>tab.dataset.tab==='create')];
+  for(const entry of entries){
+    entry.onclick();assert.equal(f.ids.get('create-kind-dialog').open,true);
+    assert.equal(f.ids.get('create-kind-event').focused,true);
+    f.ids.get('create-kind-close').onclick();assert.equal(f.ids.get('create-kind-dialog').open,false);
+  }
+  startEvent(f);f.ids.get('title').value='Unfinished picnic';
+  f.ids.get('hero-create').onclick();f.ids.get('create-kind-dialog').close();
+  assert.equal(f.ids.get('title').value,'Unfinished picnic');
+  assert.equal(f.calls.filter(call=>call.body && call.path!=='/api/preview').length,0);
+});
+
+test('popup choices open only the matching form and preserve an unfinished event when switching back',async()=>{
+  const f=await harness(eventFixture());startEvent(f);f.ids.get('title').value='Picnic draft';
+  f.ids.get('hero-create').onclick();f.ids.get('create-kind-photos').onclick();
+  assert.equal(f.ids.get('create-kind-dialog').open,false);assert.equal(f.ids.get('event-form').hidden,true);
+  assert.equal(f.ids.get('photo-create-panel').open,true);assert.equal(f.ids.get('photo-title').focused,true);
+  f.tabs.find(tab=>tab.dataset.tab==='create').onclick();f.ids.get('create-kind-event').onclick();
+  assert.equal(f.ids.get('photo-create-panel').open,false);assert.equal(f.ids.get('event-form').hidden,false);
+  assert.equal(f.ids.get('title').value,'Picnic draft');
+});
+
 test('photo-only Mini App form hides event fields, creates both role links and shares each exact role',async()=>{
-  const f=await harness(eventFixture());f.ids.get('hero-create').onclick();
-  const panel=f.ids.get('photo-create-panel');panel.open=true;panel.ontoggle();
+  const f=await harness(eventFixture());f.ids.get('hero-create').onclick();f.ids.get('create-kind-photos').onclick();
+  const panel=f.ids.get('photo-create-panel');
   assert.equal(f.ids.get('event-form').hidden,true);
   assert.match(f.ids.get('form-title').textContent,/memories/);
   f.ids.get('photo-title').value='Fictional shared memories';
@@ -141,7 +167,7 @@ for(const method of ['ready','expand','onEvent'])test('a Telegram '+method+' bri
   assert.equal(f.ids.get('home-view').hidden,false);
   assert.ok(f.findButton('home-upcoming','📅 View event'));
   assert.ok(f.findButton('event-list','✏️ Edit event'));
-  f.ids.get('hero-create').onclick();
+  startEvent(f);
   assert.equal(f.ids.get('create-view').hidden,false);
   assert.equal(f.ids.get('event-form').hidden,false);
   assert.equal(f.ids.get('invitation-mode').value,'tickets');
@@ -152,9 +178,9 @@ for(const method of ['ready','expand','onEvent'])test('a Telegram '+method+' bri
 
 test('the page close button returns every secondary view Home and preserves an unfinished event draft',async()=>{
   const f=await harness(eventFixture());
-  f.ids.get('hero-create').onclick();f.ids.get('title').value='Unfinished picnic';f.ids.get('guest-names').value='Alex = 2*';
+  startEvent(f);f.ids.get('title').value='Unfinished picnic';f.ids.get('guest-names').value='Alex = 2*';
   assert.equal(f.ids.get('app-close').attributes['aria-label'],'Close this page and return Home');f.ids.get('app-close').onclick();assert.equal(f.ids.get('home-view').hidden,false);assert.equal(f.ids.get('title').value,'Unfinished picnic');assert.equal(f.ids.get('guest-names').value,'Alex = 2*');
-  f.tabs.find(tab=>tab.dataset.tab==='create').onclick();assert.equal(f.ids.get('create-view').hidden,false);assert.equal(f.ids.get('title').value,'Unfinished picnic');
+  f.tabs.find(tab=>tab.dataset.tab==='create').onclick();f.ids.get('create-kind-event').onclick();assert.equal(f.ids.get('create-view').hidden,false);assert.equal(f.ids.get('title').value,'Unfinished picnic');
   for(const tab of ['events','settings','explore']){f.tabs.find(button=>button.dataset.tab===tab).onclick();assert.equal(f.ids.get(tab+'-view').hidden,false);f.ids.get('app-close').onclick();assert.equal(f.ids.get('home-view').hidden,false);}
   assert.equal(f.calls.filter(call=>call.body && !call.path.startsWith('/api/preview')).length,0);assert.equal(f.telegramStartupCalls.filter(method=>method==='close').length,0);
   assert.equal(f.ids.get('app-close').attributes['aria-label'],'Close App');f.ids.get('app-close').onclick();assert.equal(f.telegramStartupCalls.filter(method=>method==='close').length,1);
@@ -167,9 +193,9 @@ test('standalone Home close remains usable and both compact pickers close back t
 
 test('saving an event disables close and competing form navigation until the save settles',async()=>{
   for(const editing of [false,true]){
-    const f=await harness(eventFixture({paymentMethod:'free',starPrice:0}));if(editing)await f.findButton('event-list','✏️ Edit event').onclick();else f.ids.get('hero-create').onclick();f.ids.get('title').value='Picnic draft';const release=f.holdNextEventSave(),saving=f.ids.get('event-form').onsubmit({preventDefault(){}});
+    const f=await harness(eventFixture({paymentMethod:'free',starPrice:0}));if(editing)await f.findButton('event-list','✏️ Edit event').onclick();else startEvent(f);f.ids.get('title').value='Picnic draft';const release=f.holdNextEventSave(),saving=f.ids.get('event-form').onsubmit({preventDefault(){}});
     assert.equal(f.ids.get('app-close').disabled,true);for(const id of ['cancel-edit','edit-cancel-event','edit-delete-event']){assert.equal(f.ids.get(id).disabled,true);f.ids.get(id).onclick();}assert.equal(f.ids.get('event-end-dialog').open,false);
-    f.ids.get('app-close').onclick();f.ids.get('hero-create').onclick();f.tabs.find(tab=>tab.dataset.tab==='events').onclick();assert.equal(f.ids.get('create-view').hidden,false);assert.equal(f.ids.get('title').value,'Picnic draft');assert.match(f.ids.get('notice').textContent,/saving/);assert.equal(f.calls.filter(call=>call.path==='/api/events' || call.path.endsWith('/schedule')).length,1);
+    f.ids.get('app-close').onclick();startEvent(f);f.tabs.find(tab=>tab.dataset.tab==='events').onclick();assert.equal(f.ids.get('create-view').hidden,false);assert.equal(f.ids.get('title').value,'Picnic draft');assert.match(f.ids.get('notice').textContent,/saving/);assert.equal(f.calls.filter(call=>call.path==='/api/events' || call.path.endsWith('/schedule')).length,1);
     release();await saving;assert.equal(f.ids.get('app-close').disabled,false);assert.equal(f.ids.get('edit-delete-event').disabled,false);assert.equal(f.getEvent().title,'Picnic draft');f.ids.get('app-close').onclick();assert.equal(f.ids.get('home-view').hidden,false);
   }
 });
@@ -225,7 +251,7 @@ test('a late check-in result cannot overwrite a newly opened check-in session',a
 });
 
 test('owners and co-hosts can check in guests from Edit and new events omit that entry',async()=>{
-  for(const isOwner of [true,false]){const f=await harness(eventFixture({isOwner,isCoHost:!isOwner}));await f.findButton('event-list','✏️ Edit event').onclick();assert.equal(f.ids.get('edit-checkin-panel').hidden,false);await f.ids.get('edit-checkin').onclick();assert.equal(f.ids.get('checkin-dialog').open,true);f.ids.get('checkin-close').onclick();f.ids.get('hero-create').onclick();assert.equal(f.ids.get('edit-checkin-panel').hidden,true);}
+  for(const isOwner of [true,false]){const f=await harness(eventFixture({isOwner,isCoHost:!isOwner}));await f.findButton('event-list','✏️ Edit event').onclick();assert.equal(f.ids.get('edit-checkin-panel').hidden,false);await f.ids.get('edit-checkin').onclick();assert.equal(f.ids.get('checkin-dialog').open,true);f.ids.get('checkin-close').onclick();startEvent(f);assert.equal(f.ids.get('edit-checkin-panel').hidden,true);}
 });
 
 test('closing or dismissing a confirmation cancels the operation and permits the next confirmation',async()=>{
@@ -347,7 +373,7 @@ test('named edits hide general count and approval controls, retain per-name rule
 
 test('new forms default to reusable tickets and one-time named links while respecting an unchecked choice',async()=>{
   const f=await harness(eventFixture());
-  f.ids.get('hero-create').onclick();
+  startEvent(f);
   assert.equal(f.ids.get('invitation-mode').value,'tickets');assert.equal(f.ids.get('one-time-invite').checked,false);
   assert.equal(f.ids.get('require-approval-option').hidden,false);assert.equal(f.ids.get('ask-participant-count-option').hidden,false);
   f.ids.get('require-approval').checked=true;
@@ -372,7 +398,7 @@ test('existing reusable named links and legacy ticket defaults load without bein
 });
 
 test('new public events use reusable ticket booking without carrying named invitation rules',async()=>{
-  const f=await harness(eventFixture());f.ids.get('hero-create').onclick();
+  const f=await harness(eventFixture());startEvent(f);
   f.ids.get('invitation-mode').value='named';f.ids.get('invitation-mode').onchange();
   assert.equal(f.ids.get('one-time-invite').checked,true);
   f.ids.get('guest-names').value='Private guest = 2*';
@@ -837,7 +863,7 @@ test('closing while a response change is pending prevents a late result from reo
 });
 
 test('one-by-one guests append to an unsaved event list and preserve every attendee setting',async()=>{
-  const f=await harness(managedEvent());f.ids.get('hero-create').onclick();
+  const f=await harness(managedEvent());startEvent(f);
   f.ids.get('invitation-mode').value='named';f.ids.get('invitation-mode').onchange();f.ids.get('guest-names').value='Existing = 2!';
   assert.deepEqual(f.ids.get('guest-single-count').children.map(option=>option.value),Array.from({length:10},(_,i)=>String(i+1)));
   for(const [name,mode,count,line] of [['One','one','1','One'],['Ask','ask','1','Ask = ?'],['Change','editable','3','Change = 3'],['Confirm','confirm','2','Confirm = 2!'],['Fixed','fixed','10','Fixed = 10*']]){
@@ -933,7 +959,7 @@ test('the edit page exposes cancel and delete only to the owner and hides them f
   assert.equal(owner.ids.get('edit-event-actions').hidden,false);
   assert.equal(owner.ids.get('edit-cancel-event').disabled,false);
   assert.equal(owner.ids.get('create-view').hidden,false);
-  owner.ids.get('hero-create').onclick();
+  startEvent(owner);
   assert.equal(owner.ids.get('edit-event-actions').hidden,true);
   assert.equal(await owner.ids.get('edit-cancel-event').onclick(),null);
   assert.equal(owner.ids.get('event-end-dialog').open,false);
@@ -970,7 +996,7 @@ test('edit cancellation can delete in one request and clears the stale editor an
   assert.equal(f.findButton('event-list','✏️ Edit event'),undefined);
   assert.equal(await f.ids.get('edit-cancel-event').onclick(),null,'the stale edit target was cleared');
   assert.equal(f.calls.filter(call=>/\/(?:cancel|delete)$/.test(call.path)).length,1);
-  f.ids.get('hero-create').onclick();
+  startEvent(f);
   assert.equal(f.ids.get('edit-event-actions').hidden,true);
   assert.equal(f.ids.get('title').value,'');
   assert.equal(f.ids.get('form-title').textContent,'Make a plan.');
