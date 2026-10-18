@@ -83,6 +83,8 @@ There is no built-in photo-count limit. Telegram and hosting limits apply; Mini 
 
 Album owners can choose **Delete media album** in the bot's album controls or on the Mini App's album card. A confirmation is required. Deletion removes the album and its saved media references, stops its sharing links and clears active upload sessions. It does not remove files already sent to Telegram chats. Viewers and contributors cannot delete albums; event galleries remain managed through their event's controls.
 
+Owners can also open **Viewers & contributors** in the bot or expand it on the Mini App album card. The list shows names grouped by current access: people who opened a viewer link or a contributor link. Receiving a link alone does not add someone to the list, and contributor access does not mean a person has uploaded a file. Invalidated grants are excluded. Only the owner can see this list; it does not reveal phone numbers, access tokens or other account details.
+
 [Full feature guide](docs/features.md) · [Invitations and guest counts](docs/invitations.md) · [Payments and refunds](docs/payments.md)
 
 ## Run XEvents yourself

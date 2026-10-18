@@ -120,6 +120,16 @@ function appendPhotoLinks(node,event){
       finally{input.disabled=false;}
     };
     label.append(input,element('span','Show who uploaded media'));node.append(label);
+    const access=element('details','','album-access'),summary=element('summary','👥 Viewers & contributors'),list=element('div');access.append(summary,list);node.append(access);
+    access.ontoggle=async()=>{
+      if(!access.open)return;
+      list.replaceChildren(element('p','Loading access list…','small muted'));
+      try{
+        const {members}=await api(`collections/${event.id}/members`);if(!access.isConnected || !access.open)return;
+        list.replaceChildren(element('p','People who opened a link and still have access. Contributors may not have uploaded yet.','small muted'));
+        for(const role of ['viewer','contributor']){const people=members.filter(person=>person.role===role);list.append(element('h4',`${role==='viewer'?'Viewers':'Contributors'} (${people.length})`));for(const person of people)list.append(element('p',person.name,'small'));if(!people.length)list.append(element('p','None yet','small muted'));}
+      }catch(error){if(access.isConnected){const message=element('p',error.message,'error');message.setAttribute('role','alert');list.replaceChildren(message);}}
+    };
     node.append(action('🗑 Delete media album',()=>deleteEvent(event),'danger-button'));
   }
   for(const [role,link] of Object.entries(event.photoLinks || {})){
