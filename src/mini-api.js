@@ -382,7 +382,10 @@ async function miniApiForUser(request, env, user) {
         const e = data.events[endMatch[1]];
         if (!e || e.owner !== id) throw new InputError('Only the organiser can cancel or delete this event.');
         if (input.confirm !== true) throw new InputError('Confirm this action first.');
-        await bot.endEvent(id, e, endMatch[2] === 'delete');
+        if(e.kind==='photos'){
+          if(endMatch[2]!=='delete')throw new InputError('Media albums can be deleted, not cancelled.');
+          await bot.deleteAlbum(id,e);
+        }else await bot.endEvent(id, e, endMatch[2] === 'delete');
         return { saved: true };
       }
       const reminderMatch = path.match(/^\/api\/events\/([a-f0-9]{16})\/reminder$/);

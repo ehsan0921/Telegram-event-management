@@ -91,6 +91,27 @@ test('My stuff lists event and gallery buttons before opening details and rechec
   assert.equal(lists.length,3);assert.ok(lists.every(c=>c.reply_markup.inline_keyboard.length<=30));
 });
 
+test('album deletion is owner-only, asks first and invalidates sharing and upload sessions',async()=>{
+  const f=fixture(),e=photoCollection('Fictional album',1),other=photoCollection('Other album',1);
+  f.store.data.events[e.id]=e;f.store.data.events[other.id]=other;
+  await f.msg(2,'/start u_'+e.uploadToken);await f.cb(2,'media-add:'+e.id);
+  assert.equal(f.store.data.sessions[2].event,e.id);
+  await f.cb(2,'album-delete:'+e.id);await f.cb(2,'album-delete-confirm:'+e.id);
+  assert.equal(f.store.data.events[e.id],e);
+  await f.cb(1,'v:'+e.id);
+  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='album-delete:'+e.id));
+  await f.cb(1,'album-delete:'+e.id);assert.equal(f.store.data.events[e.id],e);
+  assert.match(f.calls.at(-1).text,/Permanently delete media album/);
+  await f.cb(1,'v:'+e.id);assert.equal(f.store.data.events[e.id],e);
+  await f.cb(1,'album-delete-confirm:'+e.id);
+  assert.equal(f.store.data.events[e.id],undefined);assert.equal(f.store.data.events[other.id],other);
+  assert.equal(f.store.data.sessions[2],undefined);assert.equal(f.store.data.preferences[2].mediaAccess[e.id],undefined);
+  await f.msg(2,'/start u_'+e.uploadToken);assert.match(f.calls.at(-1).text,/unavailable/);
+  await f.msg(2,'/start p_'+e.viewToken);assert.match(f.calls.at(-1).text,/unavailable/);
+  f.store.data.events.otherEvent={id:'otherEvent',owner:1,guests:{}};
+  await f.cb(1,'album-delete-confirm:otherEvent');assert.ok(f.store.data.events.otherEvent);
+});
+
 test('albums accept native Telegram file types and arbitrary documents while preserving attribution',async()=>{
   const f=fixture(''),e=photoCollection('Fictional files',1);f.store.data.events[e.id]=e;
   const types=['photo','video','audio','voice','animation','video_note','sticker','document'];

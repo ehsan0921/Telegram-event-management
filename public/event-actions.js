@@ -17,17 +17,20 @@ export function setupEventActions({ $, api, refresh, onEnded = () => {}, notice 
 
   function open(event, deleting) {
     if (!event?.isOwner || (!deleting && event.cancelled) || active || dialog.open) return Promise.resolve(false);
-    $('event-end-title').textContent = deleting ? 'Delete event?' : 'Cancel event?';
+    const album=event.kind==='photos';
+    if(album && !deleting)return Promise.resolve(false);
+    $('event-end-title').textContent = album ? 'Delete media album?' : deleting ? 'Delete event?' : 'Cancel event?';
     $('event-end-name').textContent = event.title;
-    $('event-end-message').textContent = deleting
+    back.textContent=album ? 'Keep album' : 'Keep event';
+    $('event-end-message').textContent = album ? 'Permanently remove this album and its saved media references? Sharing links will stop working. Files already sent to Telegram chats will remain.' : deleting
       ? 'Permanently remove this event, responses and media references? Accepted and tentative guests will be notified. Previously sent Telegram copies remain.'
       : 'Accepted and tentative guests will be notified. Keep its stored record or delete it. The event will disappear from active lists.';
     $('event-end-delete-option').hidden = deleting;
     remove.checked = false;
     status.textContent = '';
     status.hidden = true;
-    proceed.textContent = deleting ? '🗑 Delete event' : '🚫 Cancel event';
-    remove.onchange = () => { proceed.textContent = deleting ? '🗑 Delete event' : remove.checked ? '🗑 Cancel & delete' : '🚫 Cancel event'; };
+    proceed.textContent = album ? '🗑 Delete media album' : deleting ? '🗑 Delete event' : '🚫 Cancel event';
+    remove.onchange = () => { proceed.textContent = album ? '🗑 Delete media album' : deleting ? '🗑 Delete event' : remove.checked ? '🗑 Cancel & delete' : '🚫 Cancel event'; };
     setBusy(false);
 
     return new Promise(resolve => {
@@ -75,7 +78,7 @@ export function setupEventActions({ $, api, refresh, onEnded = () => {}, notice 
           return;
         }
         session.completed = true;
-        const message = operation === 'delete'
+        const message = album ? 'Media album deleted. Sharing links no longer work.' : operation === 'delete'
           ? 'Event deleted. Accepted and tentative guests notified.'
           : 'Event cancelled. Accepted and tentative guests notified.';
         let refreshError;

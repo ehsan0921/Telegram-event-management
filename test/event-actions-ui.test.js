@@ -27,6 +27,18 @@ function harness({ apiError, refreshError, hold, queueClose = false } = {}) {
   return { $, calls, notices, ended, ...controls, refreshes: () => refreshes, setApiError: error => { apiError = error; }, flushClose: () => closeEvents.shift()?.() };
 }
 
+test('album deletion uses album-specific confirmation and owner-only controls',async()=>{
+  const f=harness(),album=fixture({kind:'photos'});
+  assert.equal(await f.deleteEvent({...album,isOwner:false}),false);
+  const cancelled=f.deleteEvent(album);
+  assert.equal(f.$('event-end-title').textContent,'Delete media album?');
+  assert.match(f.$('event-end-message').textContent,/Sharing links will stop working/);
+  assert.deepEqual(f.calls,[]);f.$('event-end-back').onclick();assert.equal(await cancelled,false);
+  const deleted=f.deleteEvent(album);await f.$('event-end-confirm').onclick();assert.equal(await deleted,true);
+  assert.deepEqual(f.calls,[{path:'events/'+album.id+'/delete',body:{confirm:true}}]);
+  assert.match(f.notices.at(-1),/^Media album deleted/);assert.doesNotMatch(f.notices.at(-1),/guests notified/);
+});
+
 test('cancelling keeps the stored event by default and asks in the app', async () => {
   const f = harness(), event = fixture();
   const result = f.cancelEvent(event);
