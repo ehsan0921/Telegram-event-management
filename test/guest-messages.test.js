@@ -22,9 +22,9 @@ test('empty message prompt keeps send and cancel controls available',async()=>{
   assert.equal(prompt.reply_markup.inline_keyboard,undefined);
   await f.msg(1,'Example message');await f.msg(1,'📨 Send message');
   assert.equal(f.calls.filter(c=>c.method==='copyMessage').length,1);
-  assert.equal(f.calls.some(c=>c.reply_markup?.keyboard?.[0]?.some(b=>b.text==='🎉 Create event')),true);
+  assert.equal(f.calls.some(c=>c.reply_markup?.keyboard?.[0]?.some(b=>b.text==='➕ Create')),true);
   assert.equal(f.data.sessions[1],undefined);
-  assert.ok(f.calls.some(c=>c.__broadcastNotice && c.reply_markup?.keyboard?.[0]?.some(b=>b.text==='🎉 Create event')));
+  assert.ok(f.calls.some(c=>c.__broadcastNotice && c.reply_markup?.keyboard?.[0]?.some(b=>b.text==='➕ Create')));
 });
 
 test('composer reply keyboard cancels without sending its button text',async()=>{
@@ -33,7 +33,7 @@ test('composer reply keyboard cancels without sending its button text',async()=>
   await f.msg(1,'Draft');await f.msg(1,'✖ Cancel');
   assert.equal(f.data.sessions[1],undefined);
   assert.equal(f.calls.some(c=>c.method==='copyMessage'),false);
-  assert.equal(f.calls.some(c=>c.reply_markup?.keyboard?.[0]?.some(b=>b.text==='🎉 Create event')),true);
+  assert.equal(f.calls.some(c=>c.reply_markup?.keyboard?.[0]?.some(b=>b.text==='➕ Create')),true);
 });
 
 test('recipient selection edits the original message and shows red crosses for unselected groups',async()=>{

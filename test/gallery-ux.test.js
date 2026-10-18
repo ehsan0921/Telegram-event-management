@@ -4,6 +4,22 @@ import {setupGallery} from '../public/gallery.js';
 
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};}
 
+test('full media preview shows uploader and caption and clears them for private attribution',async t=>{
+  const file={id:'abcdef123456',type:'video',filename:'clip.mp4',name:'Fictional Alex',caption:'Example memories'};
+  const f=galleryHarness(t,async()=>({title:'Fictional album',media:[file]}));
+  await f.openGallery('0123456789abcdef');
+  await f.button('Play video').onclick();
+  assert.equal(f.$('media-uploader').textContent,'Uploaded by Fictional Alex');
+  assert.equal(f.$('media-uploader').hidden,false);
+  assert.equal(f.$('media-caption').textContent,file.caption);
+  file.name=null;file.caption='';
+  await f.openGallery('0123456789abcdef');await f.button('Play video').onclick();
+  assert.equal(f.$('media-uploader').textContent,'');
+  assert.equal(f.$('media-uploader').hidden,true);
+  assert.equal(f.$('media-caption').textContent,'');
+  assert.equal(f.$('media-caption').hidden,true);
+});
+
 test('gallery shows a direct sharing action and respects disabled QR codes',async t=>{
   let enabled=true;
   const f=galleryHarness(t,async path=>path.endsWith('gallery-qr')?{image:'data:image/gif;base64,R0lG',link:'https://t.me/fictional_bot?startapp=gallery_test'}:{title:'Club meetup',media:[],galleryUrl:'https://t.me/fictional_bot?startapp=gallery_test',qrEnabled:enabled});

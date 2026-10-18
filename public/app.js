@@ -379,6 +379,7 @@ async function openCoHost(id){
 $('cohost-close').onclick=()=>$('cohost-dialog').close();
 $('cohost-dialog').onclose=()=>{cohostGeneration++;cohostEventId=null;};
 function openEventInApp(id){
+  if($('stuff-type'))$('stuff-type').value='events';
   go('events');
   const card=document.getElementById('event-card-'+id);
   card?.scrollIntoView?.({block:'start',behavior:'smooth'});card?.focus?.({preventScroll:true});
@@ -417,16 +418,19 @@ $('home-refresh').onclick=async()=>{try{await refresh();await loadHomeSuggestion
 function renderEvents() {
   $('zone-note').textContent = `Your local time · ${selectedZone().replaceAll('_', ' ')}`;
   const list = $('event-list'); list.replaceChildren();
-  $('events-heading').textContent = listFilter === 'pending' ? 'Pending invitations' : 'Your events';
-  const events = [...state.events].filter(e => !e.cancelled && (isManager(e) || e.status !== 'no') && (listFilter !== 'pending' || (!isManager(e) && e.invitationMode!=='tickets' && e.status === 'later'))).sort((a, b) => (a.startsAt || '').localeCompare(b.startsAt || ''));
-  if (!events.length) { const empty = element('div', '', 'empty'); empty.append(element('strong', listFilter === 'pending' ? 'You’re all caught up.' : 'A calendar full of possibilities.'), element('span', listFilter === 'pending' ? 'No unanswered invitations.' : 'Create your first event, or open an invitation in the bot to join one.')); list.append(empty); }
+  $('events-heading').textContent = listFilter === 'pending' ? 'Pending invitations' : 'My stuff';
+  const media=listFilter!=='pending' && $('stuff-type')?.value==='media';
+  for(const id of ['stuff-type','stuff-type-label'])if($(id))$(id).hidden=listFilter==='pending';
+  $('zone-note').hidden=media;
+  const events = [...state.events].filter(e => (e.kind==='photos')===media && !e.cancelled && (isManager(e) || e.status !== 'no') && (listFilter !== 'pending' || (!isManager(e) && e.invitationMode!=='tickets' && e.status === 'later'))).sort((a, b) => (a.startsAt || '').localeCompare(b.startsAt || ''));
+  if (!events.length) { const empty = element('div', '', 'empty'); empty.append(element('strong', listFilter === 'pending' ? 'You’re all caught up.' : media ? 'No media albums yet.' : 'A calendar full of possibilities.'), element('span', listFilter === 'pending' ? 'No unanswered invitations.' : media ? 'Create a media album, or open a shared album link in the bot.' : 'Create your first event, or open an invitation in the bot to join one.')); list.append(empty); }
   let lastGroup;
   events.sort((a,b) => ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(a.group) - ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(b.group) || (a.group === 'Past events' ? (b.startsAt || '').localeCompare(a.startsAt || '') : (a.startsAt || '').localeCompare(b.startsAt || '')));
   for (const e of events) {
-    if (listFilter === 'all' && e.group !== lastGroup) { list.append(element('h2', e.group, 'event-group')); lastGroup = e.group; }
+    if (listFilter === 'all' && e.group !== lastGroup) { list.append(element('h2', e.kind==='photos' ? 'Media albums' : e.group, 'event-group')); lastGroup = e.group; }
     const card = element('article', '', 'event-card');card.id='event-card-'+e.id;card.tabIndex=-1;
     if(e.kind==='photos'){
-      card.append(element('span','PHOTO SHARING','tag'),element('h3',e.title),action('Open collection',()=>openGallery(e.id)));
+      card.append(element('span','MEDIA ALBUM','tag'),element('h3',e.title),action('Open album',()=>openGallery(e.id)));
       appendPhotoLinks(card,e);list.append(card);continue;
     }
     if (e.hasBanner) {
@@ -972,7 +976,7 @@ async function refreshEditGuestList(){
   try{
     const {event:latest}=await api('events/'+id);
     if(activeEvent?.id!==id || navigation!==pageNavigationGeneration || $('guest-names').value!==baseline)return;
-    if(latest.cancelled || latest.invitationMode!=='named'){notice('This event has changed. Reopen it from My events.');return;}
+    if(latest.cancelled || latest.invitationMode!=='named'){notice('This event has changed. Reopen it from My stuff.');return;}
     const list=latest.initialGuestNames ?? (latest.invitees || []).map(invitationGuestLine).join('\n');
     $('guest-names').value=list;guestListBaseline=list;
     activeEvent={...activeEvent,invitees:latest.invitees,invitationsVersion:latest.invitationsVersion,initialGuestNames:list};
@@ -998,6 +1002,7 @@ async function chooseCreation(kind){
 $('create-kind-event').onclick=()=>chooseCreation('event');
 $('create-kind-photos').onclick=()=>chooseCreation('photos');
 $('create-kind-close').onclick=()=>$('create-kind-dialog').close();
+$('stuff-type').onchange=()=>renderEvents();
 for (const b of document.querySelectorAll('[data-tab]')) b.onclick = async () => { notice('');if(b.dataset.tab==='create')requestCreation();else go(b.dataset.tab); };
 $('home-brand').onclick=event=>{event.preventDefault();go('home');};
 $('app-close').onclick=()=>{if(formSaving)return;pageNavigationGeneration++;dismissPendingMedia?.();dismissTicket();if((compactPicker || currentView==='home') && initData && typeof tg?.close==='function'){try{tg.close();}catch(error){notice(error.message);}}else if(compactPicker)notice('Close this window to return to Telegram.');else go('home');};updateAppClose();
