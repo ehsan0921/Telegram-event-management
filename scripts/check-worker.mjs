@@ -447,6 +447,16 @@ try {
   assert.equal((await api('bootstrap')).data.events.find(e=>e.id===disposableId).cancelled,true);
   assert.equal((await api(`events/${disposableId}/delete`,{confirm:true})).status,200);
   assert.ok(!(await api('bootstrap')).data.events.some(e=>e.id===disposableId));
+  const albumMade=await api('collections',{title:'Fictional disposable album',requestId:'12121212-1212-4212-8212-121212121212'});
+  assert.equal(albumMade.status,200);
+  const albumId=albumMade.data.event.id;
+  assert.equal((await api(`events/${albumId}/delete`,{confirm:true},456)).status,400,'A non-owner cannot delete an album.');
+  assert.equal((await api(`events/${albumId}/delete`,{confirm:false})).status,400,'Album deletion needs explicit confirmation.');
+  assert.equal((await api(`events/${albumId}/cancel`,{confirm:true})).status,400,'Albums do not use event cancellation.');
+  assert.ok((await api('bootstrap')).data.events.some(e=>e.id===albumId));
+  assert.equal((await api(`events/${albumId}/delete`,{confirm:true})).status,200);
+  assert.ok(!(await api('bootstrap')).data.events.some(e=>e.id===albumId));
+  assert.equal((await api(`events/${albumId}/gallery`)).status,403,'Deleted albums cannot be viewed.');
   const durationMade=await api('events',{...input,requestId:'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',endMode:'duration',durationMinutes:180});
   assert.equal(durationMade.data.event.endsAt,'2026-10-24T10:00:00Z');
   const durationPath=`events/${durationMade.data.event.id}/schedule`;

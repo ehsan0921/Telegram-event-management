@@ -120,6 +120,7 @@ function appendPhotoLinks(node,event){
       finally{input.disabled=false;}
     };
     label.append(input,element('span','Show who uploaded media'));node.append(label);
+    node.append(action('🗑 Delete media album',()=>deleteEvent(event),'danger-button'));
   }
   for(const [role,link] of Object.entries(event.photoLinks || {})){
     node.append(action('Share '+role+' link',()=>openTelegram('https://t.me/share/url?url='+encodeURIComponent(link))));

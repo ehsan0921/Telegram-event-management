@@ -81,6 +81,8 @@ The Mini App shows previews for supported image and video formats. Other formats
 
 There is no built-in photo-count limit. Telegram and hosting limits apply; Mini App downloads support files up to 20 MB, with **Send to Telegram** available for larger files. Existing invitation and album links remain supported.
 
+Album owners can choose **Delete media album** in the bot's album controls or on the Mini App's album card. A confirmation is required. Deletion removes the album and its saved media references, stops its sharing links and clears active upload sessions. It does not remove files already sent to Telegram chats. Viewers and contributors cannot delete albums; event galleries remain managed through their event's controls.
+
 [Full feature guide](docs/features.md) · [Invitations and guest counts](docs/invitations.md) · [Payments and refunds](docs/payments.md)
 
 ## Run XEvents yourself

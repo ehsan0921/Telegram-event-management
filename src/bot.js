@@ -113,6 +113,7 @@ export class Bot {
       const links=photoLinks(e,this.username);
       rows.push([{text:'Copy viewer link',copy_text:{text:links.viewer}}],[{text:'Copy contributor link',copy_text:{text:links.contributor}}]);
       rows.push([button(showsUploaders(e)?'Uploader names: shown · Hide':'Uploader names: hidden · Show',`photo-names:${e.id}`)]);
+      rows.push([button('🗑 Delete media album',`album-delete:${e.id}`)]);
     }
     rows.push([button(menu.home,'nav:home')]);
     if (e.banner) return this.api('sendPhoto',{chat_id:id,photo:e.banner,caption:e.title,reply_markup:keyboard(...rows)});
@@ -589,12 +590,24 @@ export class Bot {
     if(!wasCancelled || remove)for(const uid of cohostIds(e))if(uid!==e.owner && !['yes','maybe'].includes(e.guests[uid]?.status))await this.home(uid,`🚫 ${e.title} has been ${remove ? 'deleted' : 'cancelled'} by the owner.`).catch(()=>{});
     await this.home(id, remove ? 'Event deleted. Accepted and tentative guests were notified.' : 'Event cancelled. Accepted and tentative guests were notified.');
   }
+  async deleteAlbum(id,e){
+    if(e?.kind!=='photos' || e.owner!==id)return this.send(id,'Only the album owner can delete this media album.');
+    delete this.db.events[e.id];
+    for(const [uid,session] of Object.entries(this.db.sessions))if(session.event===e.id)delete this.db.sessions[uid];
+    for(const preference of Object.values(this.db.preferences))if(preference.mediaAccess)delete preference.mediaAccess[e.id];
+    return this.home(id,'Media album deleted. Its sharing links no longer work. Files already sent to Telegram chats remain there.');
+  }
   async callback(q) {
     if((q.data || '').startsWith('cc:'))return chatCreationCallback(this,q);
     const id = q.from.id;
     const [action, eid, arg, version] = (q.data || '').split(':');
     const e = this.db.events[eid];
     if(q.id)await this.api('answerCallbackQuery', { callback_query_id: q.id }).catch(() => {});
+    if(['album-delete','album-delete-confirm'].includes(action)){
+      if(e?.kind!=='photos' || e.owner!==id)return this.send(id,'Only the album owner can delete this media album.');
+      if(action==='album-delete')return this.send(id,`Permanently delete media album “${e.title}” and its saved media references? Sharing links will stop working. Files already sent to Telegram chats will remain.`,keyboard([button('Yes, delete album',`album-delete-confirm:${e.id}`)],[button('Keep album',`v:${e.id}`)]));
+      return this.deleteAlbum(id,e);
+    }
     if(action==='bm-undo')return undoBroadcast(this,id,eid);
     if(action==='upload-qr'){
       const link=e && shareUploadLink(e,this.username);
