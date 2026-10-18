@@ -28,6 +28,9 @@ fieldset.panel{min-width:0}fieldset legend{font-size:18px;font-weight:700;letter
 .create-kind-options{display:grid;gap:12px}.create-kind-options button{display:grid;gap:8px;width:100%;margin:0;padding:18px;text-align:left;white-space:normal}.create-kind-options strong{font-size:17px}.create-kind-options span{font-size:14px;font-weight:400;line-height:1.5}
 #confirm-dialog p { font-size:14px; overflow-wrap:anywhere; }
 #confirm-dialog .event-actions { justify-content:flex-end; }
+.stuff-menu { position:fixed; inset:auto 12px calc(86px + env(safe-area-inset-bottom)) auto; margin:0; width:min(230px,calc(100vw - 24px)); padding:8px; border:1px solid var(--line); border-radius:16px; background:var(--panel); color:var(--text); box-shadow:0 8px 30px #16382f25; }
+.stuff-menu button { display:block; width:100%; text-align:left; background:transparent; color:var(--text); }
+.stuff-menu button:hover,.stuff-menu button:focus-visible { background:var(--bg); outline:2px solid var(--accent); outline-offset:-2px; }
 .gallery-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:22px; }
 .gallery-item { overflow:hidden; border:1px solid var(--line); border-radius:16px; background:var(--panel); }
 .gallery-item img { display:block; width:100%; height:170px; object-fit:cover; background:var(--bg); cursor:zoom-in; }

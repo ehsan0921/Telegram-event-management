@@ -74,6 +74,7 @@ async function api(path, body) {
 }
 function go(tab) {
   if(formSaving){notice('Your event is saving. Please wait.');return;}
+  $('stuff-menu')?.hidePopover?.();
   const target = tab === 'pending' ? 'events' : tab;
   if (tab === 'events' || tab === 'pending') { listFilter = tab === 'pending' ? 'pending' : 'all'; renderEvents(); }
   if (['admin','admin-analytics'].includes(tab) && !state.user?.isSuperAdmin) return;
@@ -420,7 +421,6 @@ function renderEvents() {
   const list = $('event-list'); list.replaceChildren();
   $('events-heading').textContent = listFilter === 'pending' ? 'Pending invitations' : 'My stuff';
   const media=listFilter!=='pending' && $('stuff-type')?.value==='media';
-  for(const id of ['stuff-type','stuff-type-label'])if($(id))$(id).hidden=listFilter==='pending';
   $('zone-note').hidden=media;
   const events = [...state.events].filter(e => (e.kind==='photos')===media && !e.cancelled && (isManager(e) || e.status !== 'no') && (listFilter !== 'pending' || (!isManager(e) && e.invitationMode!=='tickets' && e.status === 'later'))).sort((a, b) => (a.startsAt || '').localeCompare(b.startsAt || ''));
   if (!events.length) { const empty = element('div', '', 'empty'); empty.append(element('strong', listFilter === 'pending' ? 'You’re all caught up.' : media ? 'No media albums yet.' : 'A calendar full of possibilities.'), element('span', listFilter === 'pending' ? 'No unanswered invitations.' : media ? 'Create a media album, or open a shared album link in the bot.' : 'Create your first event, or open an invitation in the bot to join one.')); list.append(empty); }
@@ -1003,7 +1003,8 @@ $('create-kind-event').onclick=()=>chooseCreation('event');
 $('create-kind-photos').onclick=()=>chooseCreation('photos');
 $('create-kind-close').onclick=()=>$('create-kind-dialog').close();
 $('stuff-type').onchange=()=>renderEvents();
-for (const b of document.querySelectorAll('[data-tab]')) b.onclick = async () => { notice('');if(b.dataset.tab==='create')requestCreation();else go(b.dataset.tab); };
+for (const b of document.querySelectorAll('[data-tab]')) b.onclick = async () => { notice('');if(b.dataset.tab==='events' && $('stuff-menu')?.showPopover)return;if(b.dataset.tab==='create')requestCreation();else go(b.dataset.tab); };
+for(const [id,type] of [['stuff-events','events'],['stuff-media','media']])$(id).onclick=()=>{if(formSaving){notice('Your changes are still saving. Please wait.');return;}$('stuff-type').value=type;go('events');};
 $('home-brand').onclick=event=>{event.preventDefault();go('home');};
 $('app-close').onclick=()=>{if(formSaving)return;pageNavigationGeneration++;dismissPendingMedia?.();dismissTicket();if((compactPicker || currentView==='home') && initData && typeof tg?.close==='function'){try{tg.close();}catch(error){notice(error.message);}}else if(compactPicker)notice('Close this window to return to Telegram.');else go('home');};updateAppClose();
 $('hero-create').onclick = () => requestCreation(true);
