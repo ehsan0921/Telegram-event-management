@@ -27,7 +27,7 @@ const hasRecordedResponse = guest => typeof guest?.responseRecorded==='boolean' 
 const menu = { new: '🎉 Create event', events: '📅 My events', help: '❓ Help', home: '🏠 Main menu', cancel: '✖️ Cancel input', skip: '⏭ Skip', done: '✅ Finish uploads', name: '👤 Use Telegram name', app: 'App', picker: '🗓 Pick date & time', pending: '⏳ Pending invitations' };
 const reply = (...rows) => ({ keyboard: rows.map(row => row.map(text => typeof text === 'string' ? { text } : text)), resize_keyboard: true, is_persistent: true });
 // The authenticated App launcher lives in Telegram's built-in chat menu.
-const homeKeyboard = () => reply([menu.new, menu.events], ['📷 Photo sharing',menu.help]);
+const homeKeyboard = () => reply([menu.new, menu.events], ['📷 Create Album','🗂 My album'], ['⚙️ Settings']);
 
 export class Bot {
   constructor(store, api, username, appUrl) { this.store = store; this.api = api; this.username = username; this.appUrl = appUrl; this.store.data.preferences ||= {}; }
@@ -339,7 +339,18 @@ export class Bot {
       if(text==='Done' || text==='📨 Send message')return sendBroadcast(this,id,event);
       return collectBroadcast(this,id,event,m);
     }
-    if(text==='📷 Photo sharing'){this.session(id,{step:'photo-title'});return this.prompt(id,'Photo collection name? (up to 100 characters)');}
+    if(text==='📷 Photo sharing' || text==='📷 Create Album'){this.session(id,{step:'photo-title'});return this.prompt(id,'Album name? (up to 100 characters)');}
+    if(text==='🗂 My album'){
+      this.session(id);
+      const albums=Object.values(this.db.events).filter(e=>e.kind==='photos' && !e.cancelled && this.mediaAllowed(e,id));
+      await this.home(id,albums.length ? 'Your albums' : 'No albums yet. Tap Create Album to start.');
+      for(const album of albums)await this.mediaCard(id,album);
+      return;
+    }
+    if(text==='⚙️ Settings'){
+      this.session(id);
+      return this.send(id,this.appUrl ? 'Manage your profile, timezone and display currency.' : 'Settings are available in the Mini App when it is configured. Use /help for help.',this.appUrl ? keyboard([this.miniButton('Open settings','?tab=settings')]) : homeKeyboard());
+    }
     if(text===menu.new)return startChatCreation(this,id);
     const navigation = { [menu.new]: '/new', [menu.events]: '/events', [menu.help]: '/help', [menu.home]: '/start', [menu.cancel]: '/cancel', [menu.app]: '/app', [menu.picker]: '/picker', [menu.pending]: '/pending' };
     if (['📱 Open app','📱 Open planner','📱 Open XEvents planner'].includes(text)) text = '/app';

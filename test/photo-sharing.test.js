@@ -38,6 +38,26 @@ test('photo-only creation works from the keyboard and from Create event without 
   }
 });
 
+test('album keyboard creates collections and lists only accessible active albums',async()=>{
+  const f=fixture();
+  await f.msg(1,'📷 Create Album');
+  await f.msg(1,'Fictional album');
+  const own=Object.values(f.store.data.events)[0];
+  const shared=photoCollection('Shared album',2),privateAlbum=photoCollection('Private album',2),cancelled=photoCollection('Cancelled album',1);
+  cancelled.cancelled=true;
+  for(const e of [shared,privateAlbum,cancelled])f.store.data.events[e.id]=e;
+  await f.msg(1,'/start p_'+shared.viewToken);
+  f.calls.length=0;
+  await f.msg(1,'🗂 My album');
+  assert.deepEqual(f.calls.slice(1).map(c=>c.text),[own.title,shared.title]);
+  assert.equal(f.store.data.sessions[1],undefined);
+  await f.msg(1,'⚙️ Settings');
+  assert.equal(f.calls.at(-1).reply_markup.inline_keyboard[0][0].web_app.url,'https://example.test/app?tab=settings');
+  const offline=fixture('');
+  await offline.msg(1,'⚙️ Settings');
+  assert.match(offline.calls.at(-1).text,/when it is configured/);
+});
+
 test('viewers cannot upload via callbacks, guessed upload links or stale contributor sessions',async()=>{
   const f=fixture(),e=photoCollection('Shared memories',1);f.store.data.events[e.id]=e;
   await f.msg(2,'/start p_'+e.viewToken);

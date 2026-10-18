@@ -1126,6 +1126,7 @@ if (!initData) {
     else if(query.get('ticket'))await openTicket(query.get('ticket'));
     else if(query.get('checkin'))await openCheckin(query.get('checkin'));
     else if (query.get('event')) { const event = state.events.find(e => e.id === query.get('event')); if (isManager(event) && !event.cancelled) await editEvent(event.id); }
+    else if(query.get('tab')==='settings')go('settings');
     else go('home');
   } catch (e) { window.reportAppError?.(e,'Loading planner');notice(e.message); $('event-list').replaceChildren(element('div', 'Could not load your events. Tap Refresh to try again.', 'empty')); }
 }
