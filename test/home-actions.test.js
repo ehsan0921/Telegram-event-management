@@ -84,6 +84,20 @@ test('My stuff dropdown separates events and media albums and event navigation r
   assert.ok(f.cards('event-list')[0].focused);
 });
 
+test('Media albums includes enabled event galleries and excludes disabled, cancelled and declined events',async()=>{
+  const enabled=event({permissions:{viewMedia:true},mediaCount:0});
+  const hidden=event({id:'2222222222222222',isOwner:true,permissions:{viewMedia:false}});
+  const cancelled=event({id:'3333333333333333',permissions:{viewMedia:true},cancelled:true});
+  const declined=event({id:'4444444444444444',permissions:{viewMedia:true},status:'no'});
+  const f=harness([enabled,hidden,cancelled,declined]);f.nodes.get('stuff-type').value='media';f.ui.renderEvents();
+  const cards=f.cards('event-list');assert.deepEqual(cards.map(card=>card.id),['event-card-'+enabled.id]);
+  assert.ok(cards[0].children.some(node=>node.textContent==='EVENT GALLERY'));
+  await f.button(cards[0],'Open album').onclick();
+  assert.deepEqual(f.calls.at(-1),{kind:'media',args:[enabled.id]});
+  f.nodes.get('stuff-type').value='events';f.ui.renderEvents();
+  assert.ok(f.cards('event-list').some(card=>card.id==='event-card-'+enabled.id));
+});
+
 test('Home provides app navigation shortcuts alongside event cards',()=>{
   const section=html.slice(html.indexOf('id="home-view"'),html.indexOf('id="events-view"'));
   const shortcuts=section.match(/<nav\b[^>]*class="[^"]*home-shortcuts[^"]*"[^>]*>([\s\S]*?)<\/nav>/)?.[1];

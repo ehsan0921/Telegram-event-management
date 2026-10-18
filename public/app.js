@@ -422,16 +422,18 @@ function renderEvents() {
   $('events-heading').textContent = listFilter === 'pending' ? 'Pending invitations' : 'My stuff';
   const media=listFilter!=='pending' && $('stuff-type')?.value==='media';
   $('zone-note').hidden=media;
-  const events = [...state.events].filter(e => (e.kind==='photos')===media && !e.cancelled && (isManager(e) || e.status !== 'no') && (listFilter !== 'pending' || (!isManager(e) && e.invitationMode!=='tickets' && e.status === 'later'))).sort((a, b) => (a.startsAt || '').localeCompare(b.startsAt || ''));
+  const events = [...state.events].filter(e => (media ? e.kind==='photos' || e.permissions?.viewMedia===true : e.kind!=='photos') && !e.cancelled && (isManager(e) || e.status !== 'no') && (listFilter !== 'pending' || (!isManager(e) && e.invitationMode!=='tickets' && e.status === 'later'))).sort((a, b) => (a.startsAt || '').localeCompare(b.startsAt || ''));
   if (!events.length) { const empty = element('div', '', 'empty'); empty.append(element('strong', listFilter === 'pending' ? 'You’re all caught up.' : media ? 'No media albums yet.' : 'A calendar full of possibilities.'), element('span', listFilter === 'pending' ? 'No unanswered invitations.' : media ? 'Create a media album, or open a shared album link in the bot.' : 'Create your first event, or open an invitation in the bot to join one.')); list.append(empty); }
   let lastGroup;
   events.sort((a,b) => ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(a.group) - ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(b.group) || (a.group === 'Past events' ? (b.startsAt || '').localeCompare(a.startsAt || '') : (a.startsAt || '').localeCompare(b.startsAt || '')));
   for (const e of events) {
-    if (listFilter === 'all' && e.group !== lastGroup) { list.append(element('h2', e.kind==='photos' ? 'Media albums' : e.group, 'event-group')); lastGroup = e.group; }
+    const group=media ? e.kind==='photos' ? 'Media albums' : 'Event galleries' : e.group;
+    if (listFilter === 'all' && group !== lastGroup) { list.append(element('h2', group, 'event-group')); lastGroup = group; }
     const card = element('article', '', 'event-card');card.id='event-card-'+e.id;card.tabIndex=-1;
-    if(e.kind==='photos'){
-      card.append(element('span','MEDIA ALBUM','tag'),element('h3',e.title),action('Open album',()=>openGallery(e.id)));
-      appendPhotoLinks(card,e);list.append(card);continue;
+    if(media){
+      card.append(element('span',e.kind==='photos'?'MEDIA ALBUM':'EVENT GALLERY','tag'),element('h3',e.title),action('Open album',()=>openGallery(e.id)));
+      if(e.kind==='photos')appendPhotoLinks(card,e);
+      list.append(card);continue;
     }
     if (e.hasBanner) {
       const img = document.createElement('img'); img.className = 'event-banner'; img.alt = `Banner for ${e.title}`; card.append(img);
