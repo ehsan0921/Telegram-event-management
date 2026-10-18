@@ -2,7 +2,7 @@
 
 **Open-source event management inside Telegram.**
 
-Create events, invite guests, collect RSVPs, issue tickets, check people in, and share event media without leaving Telegram.
+Create events, invite guests, collect RSVPs, issue tickets, check people in, and share media in event galleries or standalone albums without leaving Telegram.
 
 **[Try XEvents on Telegram →](https://t.me/XEvents_bot)** · [Demo walkthrough](#try-the-demo) · [Self-hosting](docs/self-hosting.md) · [Contributing](CONTRIBUTING.md)
 
@@ -15,9 +15,10 @@ For clubs, meetups, workshops and community gatherings. Hosts and guests use Tel
 ## Try the demo
 
 1. Open **[@XEvents_bot](https://t.me/XEvents_bot)** and press **Start**.
-2. Use **App** to explore the Mini App, or **Create event** for the guided chat flow.
+2. Tap **Create**, then choose **Event** or **Media album**. Use **App** to explore the Mini App.
 3. For your own event, choose a shared ticket-booking link or a named guest list with personal RSVP links.
 4. Manage replies and guests, then use **Check in guests** on event day.
+5. Open **My stuff** to find your events and albums. In the Mini App, tap **My stuff ▾** and choose **Events** or **Media albums** from its dropdown menu.
 
 ### A look inside
 
@@ -47,11 +48,34 @@ The walkthrough is a silent sequence of actual local UI captures, not a live Tel
 | Track group counts, approval requests and attendance | Receive tickets after required approval and payment |
 | Check in groups with on-demand codes or optional QR tickets | Request a short-lived check-in code; use QR when enabled |
 | Configure free events, manual payments or Telegram Stars | Share photos, videos and files in the event gallery |
+| Create standalone media albums with separate viewer and contributor links | Browse shared albums or upload using a contributor link |
 | Control guest-list, media and private-location access | Access private details when attendance requirements are met |
 
 QR codes are optional and off for new events. Stars payouts to organisers are manual. Direct card processing and calendar synchronisation are not implemented.
 
-Share photos with attendees in one event collection, with no built-in photo-count limit. Telegram and hosting limits apply; Mini App downloads support files up to 20 MB, with **Send to Telegram** available for larger files.
+### Create and find your stuff
+
+The bot's main keyboard has two rows:
+
+| | | |
+| --- | --- | --- |
+| **Create** | **My stuff** | |
+| **App** | **Settings** | **My account** |
+
+**Create** asks whether you want an event or a media album. **My stuff** brings together events you host or have joined and albums you can access. In the Mini App, tapping **My stuff ▾** opens a dropdown on the navigation button with **Events** and **Media albums**. **Settings** opens profile settings; **My account** shows your name, timezone and display currency with an option to edit your profile.
+
+### Shared media albums
+
+Create an album without an event date, guest list, tickets or RSVPs. In chat, choose **Create → Media album** and enter a name. In the Mini App, choose **Create**, then the media option. Share the resulting links:
+
+- **Viewer link:** lets anyone holding it browse the album.
+- **Contributor link:** lets anyone holding it browse and add files. Share it only with people you want to contribute; it does not grant ownership or management access.
+
+Albums accept photos, videos, audio, voice messages, animations, video messages, stickers and arbitrary files sent as Telegram documents, including PDFs and ZIP archives. Uploads happen in the bot chat: open the album's **Add media** action, send files, then tap **Finish uploads**. Existing event galleries support the same file types.
+
+The Mini App shows previews for supported image and video formats. Other formats remain available through **Download** and **Send to Telegram**. Uploader names appear on gallery cards and in full-size previews. Album owners can turn **Show who uploaded media** off; this hides names from the gallery and bot attribution, while captions and file contents remain visible.
+
+There is no built-in photo-count limit. Telegram and hosting limits apply; Mini App downloads support files up to 20 MB, with **Send to Telegram** available for larger files. Existing invitation and album links remain supported.
 
 [Full feature guide](docs/features.md) · [Invitations and guest counts](docs/invitations.md) · [Payments and refunds](docs/payments.md)
 
