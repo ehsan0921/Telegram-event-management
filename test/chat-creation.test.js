@@ -67,15 +67,18 @@ function fixture(appUrl) {
   return { store, bot, calls, msg, cb, latest, buttons, tap, tapLabel, title, customDate, toReview };
 }
 
-test('Create event is discoverable in the native home keyboard with or without App', async () => {
+test('Create offers event and media album choices with or without App', async () => {
   for (const appUrl of [undefined, 'https://example.test/app']) {
     const f = fixture(appUrl);
     await f.msg('/start');
     const entries = f.latest().reply_markup.keyboard.flat();
-    const create = entries.find(item => item.text === '🎉 Create event');
+    const create = entries.find(item => item.text === '➕ Create');
     assert.ok(create);
     assert.equal(create.web_app, undefined);
     await f.msg(create.text);
+    assert.equal(f.store.data.sessions[1],undefined);
+    assert.ok(f.buttons().some(item=>item.callback_data==='photos-new'));
+    await f.cb('nav:new');
     assert.equal(f.store.data.sessions[1].flow, 'chat-create');
     assert.match(f.latest().text, /name|title/i);
   }

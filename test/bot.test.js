@@ -149,13 +149,13 @@ test('native App menu stays available without duplicate App buttons or stale key
   const f=fixture();f.bot.appUrl='https://example.test/app';
   await f.msg(1,'/start');
   const entries=f.calls.at(-1).reply_markup.keyboard.flat();
-  assert.deepEqual(f.calls.at(-1).reply_markup.keyboard.map(row=>row.map(item=>item.text)),[['🎉 Create event','📅 My events'],['📷 Create Album','🗂 My album'],['⚙️ Settings']]);
-  assert.equal(entries.some(item=>item.web_app || item.text==='App'),false);
+  assert.deepEqual(f.calls.at(-1).reply_markup.keyboard.map(row=>row.map(item=>item.text)),[['➕ Create','🗂 My stuff'],['App','⚙️ Settings','👤 My account']]);
+  assert.equal(entries.some(item=>item.web_app),false);
   assert.ok(f.calls.some(c=>c.method==='setChatMenuButton' && c.menu_button.text==='App' && c.menu_button.web_app.url===f.bot.appUrl));
   for(const text of ['App','📱 Open app','📱 Open planner','/start app']){
     await f.msg(1,text);const response=f.calls.at(-1);
     assert.match(response.text,/built-in App button/);
-    assert.equal(response.reply_markup.keyboard.flat().some(item=>item.text==='App' || item.web_app),false);
+    assert.equal(response.reply_markup.keyboard.flat().some(item=>item.web_app),false);
   }
   const event=await f.create();
   await f.bot.card(1,event);
@@ -319,7 +319,7 @@ test('event data, conversations, and polling offset survive a restart', async ()
 test('button menus complete event creation and ticket booking without typed commands', async () => {
   const f = fixture();
   await f.msg(1, '/start');
-  assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].text, '🎉 Create event');
+  assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].text, '➕ Create');
   assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].web_app,undefined);
   await f.msg(1, '🎉 Create event');
   await f.msg(1, 'Button party');
@@ -342,7 +342,7 @@ test('button menus complete event creation and ticket booking without typed comm
   await f.cb(2, `u:${e.id}`); await f.msg(2, undefined, { document: { file_id: 'test' } });
   await f.msg(2, '✅ Finish uploads'); assert.equal(f.store.data.sessions[2], undefined);
   await f.msg(2, '📅 My events'); assert.match(f.calls.at(-1).text, /Button party/);
-  await f.cb(2, 'nav:home'); assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].text, '🎉 Create event');
+  await f.cb(2, 'nav:home'); assert.equal(f.calls.at(-1).reply_markup.keyboard[0][0].text, '➕ Create');
   await f.msg(2, '🎉 Create event'); await f.msg(2, '✖️ Cancel input');
   assert.equal(f.store.data.sessions[2], undefined); assert.equal(Object.keys(f.store.data.events).length, 1);
 });

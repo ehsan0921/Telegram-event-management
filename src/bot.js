@@ -1,5 +1,6 @@
 import {paymentMethod,paidEvent} from './event-payment.js';
 import {qrPhoto} from './telegram-upload.js';
+import {uploadedMedia,mediaMethods,mediaPayload} from './media-preview.js';
 import {startBroadcast,toggleBroadcast,collectBroadcast,sendBroadcast,undoBroadcast} from './guest-messages.js';
 import {invitationMode,claimInvitation,invitationSettings,invitationParticipantMode,oneTimeInvites,invitationAvailable,consumeInvitation,reconcileInvitationClaims} from './invitations.js';
 import {isManager,cohostEntries,cohostIds,cohostGuard,cohostLink,createCohostInvite,revokeCohost,claimCohost} from './cohosts.js';
@@ -27,7 +28,8 @@ const hasRecordedResponse = guest => typeof guest?.responseRecorded==='boolean' 
 const menu = { new: '🎉 Create event', events: '📅 My events', help: '❓ Help', home: '🏠 Main menu', cancel: '✖️ Cancel input', skip: '⏭ Skip', done: '✅ Finish uploads', name: '👤 Use Telegram name', app: 'App', picker: '🗓 Pick date & time', pending: '⏳ Pending invitations' };
 const reply = (...rows) => ({ keyboard: rows.map(row => row.map(text => typeof text === 'string' ? { text } : text)), resize_keyboard: true, is_persistent: true });
 // The authenticated App launcher lives in Telegram's built-in chat menu.
-const homeKeyboard = () => reply([menu.new, menu.events], ['📷 Create Album','🗂 My album'], ['⚙️ Settings']);
+Object.assign(menu,{create:'➕ Create',stuff:'🗂 My stuff',settings:'⚙️ Settings',account:'👤 My account'});
+const homeKeyboard = () => reply([menu.create, menu.stuff], [menu.app,menu.settings,menu.account]);
 
 export class Bot {
   constructor(store, api, username, appUrl) { this.store = store; this.api = api; this.username = username; this.appUrl = appUrl; this.store.data.preferences ||= {}; }
@@ -85,7 +87,7 @@ export class Bot {
     return this.afterIdentity(id,e,s);
   }
   hasPending(id) { return Object.values(this.db.events).some(e => this.allowed(e,id) && !isManager(e,id) && invitationMode(e)!=='tickets' && !e.cancelled && e.guests[id]?.status === 'later'); }
-  home(id, text = 'Welcome to XEvents 🎉\nTap Create event or My events below.',immediate=false) { return this.api('sendMessage',{chat_id:id,text,reply_markup:homeKeyboard(),...(immediate?{__broadcastNotice:true}:{})}); }
+  home(id, text = 'Welcome to XEvents 🎉\nTap Create to make an event or media album, or My stuff to find yours.',immediate=false) { return this.api('sendMessage',{chat_id:id,text,reply_markup:homeKeyboard(),...(immediate?{__broadcastNotice:true}:{})}); }
   session(id, value) { if (value) this.db.sessions[id] = value; else delete this.db.sessions[id]; }
   link(e) { return `https://t.me/${this.username}?start=e_${e.id}`; }
   miniButton(text, params = '') { return { text, web_app: { url: this.appUrl + params } }; }
@@ -339,6 +341,15 @@ export class Bot {
       if(text==='Done' || text==='📨 Send message')return sendBroadcast(this,id,event);
       return collectBroadcast(this,id,event,m);
     }
+    if(text===menu.create){
+      this.session(id);
+      return this.send(id,'What would you like to create?',keyboard([button('🎉 Event','nav:new'),button('📷 Media album','photos-new')]));
+    }
+    if(text===menu.account){
+      this.session(id);
+      const pref=this.db.preferences[id] || {};
+      return this.send(id,`My account\nName: ${pref.profileName || name(m.from)}\nTimezone: ${pref.timezone || 'Not set'}\nDisplay currency: ${pref.currency || 'Automatic'}`,this.appUrl ? keyboard([this.miniButton('Edit my account','?tab=settings')]) : homeKeyboard());
+    }
     if(text==='📷 Photo sharing' || text==='📷 Create Album'){this.session(id,{step:'photo-title'});return this.prompt(id,'Album name? (up to 100 characters)');}
     if(text==='🗂 My album'){
       this.session(id);
@@ -352,7 +363,7 @@ export class Bot {
       return this.send(id,this.appUrl ? 'Manage your profile, timezone and display currency.' : 'Settings are available in the Mini App when it is configured. Use /help for help.',this.appUrl ? keyboard([this.miniButton('Open settings','?tab=settings')]) : homeKeyboard());
     }
     if(text===menu.new)return startChatCreation(this,id);
-    const navigation = { [menu.new]: '/new', [menu.events]: '/events', [menu.help]: '/help', [menu.home]: '/start', [menu.cancel]: '/cancel', [menu.app]: '/app', [menu.picker]: '/picker', [menu.pending]: '/pending' };
+    const navigation = { [menu.stuff]: '/stuff', [menu.new]: '/new', [menu.events]: '/events', [menu.help]: '/help', [menu.home]: '/start', [menu.cancel]: '/cancel', [menu.app]: '/app', [menu.picker]: '/picker', [menu.pending]: '/pending' };
     if (['📱 Open app','📱 Open planner','📱 Open XEvents planner'].includes(text)) text = '/app';
     if (navigation[text]) text = navigation[text];
     else if (current && text === menu.name && current.step === 'name') text = '/skip';
@@ -426,18 +437,21 @@ export class Bot {
       }
       return this.home(id);
     }
-    if (command === '/help') { this.session(id); return this.home(id, 'Tap Create event to plan in chat, or My events to manage invitations.'+(this.appUrl ? '\nUse the built-in App button for the full planner.' : '')+'\nPick a date, time and location, then review and create. More options adds named invitations, a banner, reminders and guest settings.'); }
-    if (command === '/events') {
+    if (command === '/help') { this.session(id); return this.home(id, 'Tap Create and choose Event or Media album. My stuff shows your events and albums.'+(this.appUrl ? '\nUse the built-in App button for the full planner.' : '')+'\nFor events, pick a date, time and location, then review and create. More options adds named invitations, a banner, reminders and guest settings.'); }
+    if (command === '/events' || command === '/stuff') {
       this.session(id);
-      const events = Object.values(this.db.events).filter(e => this.allowed(e, id) && !e.cancelled && (isManager(e,id) || e.guests[id]?.status !== 'no'));
-      if (!events.length) return this.home(id, 'No events yet. Tap Create event, or open an invitation.');
-      await this.home(id, '📅 Your events — tap Open event below.');
+      const all=Object.values(this.db.events);
+      const albums=command==='/stuff' ? all.filter(e=>e.kind==='photos' && !e.cancelled && this.mediaAllowed(e,id)) : [];
+      const events = all.filter(e => e.kind!=='photos' && this.allowed(e, id) && !e.cancelled && (isManager(e,id) || e.guests[id]?.status !== 'no'));
+      if (!events.length && !albums.length) return this.home(id, 'Nothing here yet. Tap Create to make an event or media album, or open an invitation.');
+      await this.home(id, command==='/stuff' ? 'Your stuff — events and media albums.' : '📅 Your events — tap Open event below.');
       for (const group of ['Upcoming events', 'Past events', 'Date not set', 'Cancelled events']) {
         const entries = events.filter(e => eventGroup(e) === group).sort((a,b) => group === 'Past events' ? Date.parse(b.startsAt)-Date.parse(a.startsAt) : Date.parse(a.startsAt)-Date.parse(b.startsAt));
         if (!entries.length) continue;
         await this.send(id, group);
         for (const e of entries) await this.send(id, `${e.cancelled ? '🚫' : '🎉'} ${e.title}\n${this.time(e, id)}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}`, keyboard([button('Open event', `v:${e.id}`)], ...(upcoming(e) ? [[button('🔔 Set reminder', `reminder:${e.id}`)]] : [])));
       }
+      if(albums.length){await this.send(id,'Media albums');for(const album of albums)await this.mediaCard(id,album);}
       return;
     }
     if (command === '/new') {
@@ -446,7 +460,7 @@ export class Bot {
     }
     if (text.startsWith('/') && command !== '/skip' && command !== '/done') return this.send(id, 'Choose a menu button, or tap Cancel input to leave this step.', current ? this.inputKeyboard(current) : homeKeyboard());
     const s = this.db.sessions[id];
-    if (!s) return this.home(id, 'Choose Create event or My events below.');
+    if (!s) return this.home(id, 'Choose Create or My stuff below.');
     if(s.step==='photo-title'){
       if(!text || text.length>100)return this.prompt(id,'Use a collection name of 1–100 characters.');
       const collection=photoCollection(text,id);this.db.events[collection.id]=collection;this.session(id);
@@ -478,7 +492,7 @@ export class Bot {
     if (s.step === 'upload') {
       if ((!s.uploadToken && !can(e, id, 'uploadMedia')) || (s.uploadToken && !linkUploader)) { this.session(id); return this.home(id, 'The organiser has disabled these uploads.'); }
       if (command === '/done') { this.session(id); await this.home(id, `✅ Uploads finished${s.uploads ? ': ' + s.uploads + ' saved' : ''}.`); if (s.mediaOnly) return this.mediaCard(id,e); if (this.allowed(e, id)) return this.card(id, e); return; }
-      const media = m.photo ? { type: 'photo', file: m.photo.at(-1) } : m.video ? { type: 'video', file: m.video } : m.document ? { type: 'document', file: m.document } : null;
+      const media = uploadedMedia(m);
       if (!media) return this.prompt(id, 'Send a photo, video, or file. Tap Finish uploads when finished.');
       e.media.push({ id: randomBytes(6).toString('hex'), type: media.type, fileId: media.file.file_id, mimeType:media.file.mime_type || null,thumbnail:media.file.thumbnail?.file_id || media.file.thumb?.file_id || null,size: media.file.file_size || null, filename: media.file.file_name || media.type, caption: clean(m.caption, 700), by: id, name: g?.name || name(m.from), at: new Date().toISOString() });
       s.uploads = (s.uploads || 0) + 1;
@@ -780,8 +794,9 @@ export class Bot {
       const media = e.media.slice(page * 5, page * 5 + 5);
       if (!media.length) return this.send(id, 'No shared media on this page yet.', keyboard(...(can(e, id, 'uploadMedia') ? [[button('📎 Add media', `u:${eid}`)]] : []), [button('Back to event', `v:${eid}`)]));
       for (const f of media) {
-        const method = { photo: 'sendPhoto', video: 'sendVideo', document: 'sendDocument' }[f.type];
-        await this.api(method, { chat_id: id, [f.type]: f.fileId, caption: [showsUploaders(e)?`Shared by ${f.name}`:'Shared media',f.caption].filter(Boolean).join('\n'), ...(isManager(e,id) ? { reply_markup: keyboard([button('Remove from event', `remove:${eid}:${f.id}`)]) } : {}) });
+        const caption=[showsUploaders(e)?`Shared by ${f.name}`:'Shared media',f.caption].filter(Boolean).join('\n');
+        if(['sticker','video_note'].includes(f.type))await this.send(id,caption);
+        await this.api(mediaMethods[f.type], { ...mediaPayload(f,id,caption), ...(isManager(e,id) ? { reply_markup: keyboard([button('Remove from event', `remove:${eid}:${f.id}`)]) } : {}) });
       }
       const nav = [];
       if (page > 0) nav.push(button('← Previous', `m:${eid}:${page - 1}`));

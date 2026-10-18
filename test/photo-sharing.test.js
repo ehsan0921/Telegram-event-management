@@ -51,11 +51,46 @@ test('album keyboard creates collections and lists only accessible active albums
   await f.msg(1,'🗂 My album');
   assert.deepEqual(f.calls.slice(1).map(c=>c.text),[own.title,shared.title]);
   assert.equal(f.store.data.sessions[1],undefined);
+  f.calls.length=0;
+  await f.msg(1,'🗂 My stuff');
+  assert.deepEqual(f.calls.slice(2).map(c=>c.text),[own.title,shared.title]);
+  await f.msg(1,'➕ Create');
+  assert.deepEqual(f.calls.at(-1).reply_markup.inline_keyboard.flat().map(b=>b.callback_data),['nav:new','photos-new']);
+  await f.cb(1,'photos-new');
+  assert.equal(f.store.data.sessions[1].step,'photo-title');
+  await f.msg(1,'👤 My account');
+  assert.equal(f.store.data.sessions[1],undefined);
+  assert.match(f.calls.at(-1).text,/My account\nName: Alex/);
+  assert.equal(f.calls.at(-1).reply_markup.inline_keyboard[0][0].web_app.url,'https://example.test/app?tab=settings');
   await f.msg(1,'⚙️ Settings');
   assert.equal(f.calls.at(-1).reply_markup.inline_keyboard[0][0].web_app.url,'https://example.test/app?tab=settings');
   const offline=fixture('');
   await offline.msg(1,'⚙️ Settings');
   assert.match(offline.calls.at(-1).text,/when it is configured/);
+});
+
+test('albums accept native Telegram file types and arbitrary documents while preserving attribution',async()=>{
+  const f=fixture(''),e=photoCollection('Fictional files',1);f.store.data.events[e.id]=e;
+  const types=['photo','video','audio','voice','animation','video_note','sticker','document'];
+  await f.cb(1,'media-add:'+e.id);
+  for(const type of types){
+    const file={file_id:'fictional-'+type,file_size:100,...(type==='document'?{file_name:'example.zip',mime_type:'application/zip'}:{})};
+    await f.msg(1,'',{[type]:type==='photo'?[file]:file,caption:'Fictional caption'});
+  }
+  assert.deepEqual(e.media.map(file=>file.type),types);
+  assert.ok(e.media.every(file=>file.name==='Alex' && file.by===1));
+  assert.equal(e.media.at(-1).filename,'example.zip');
+  for(const page of [0,1])await f.cb(1,`m:${e.id}:${page}`);
+  const methods={photo:'sendPhoto',video:'sendVideo',audio:'sendAudio',voice:'sendVoice',animation:'sendAnimation',video_note:'sendVideoNote',sticker:'sendSticker',document:'sendDocument'};
+  for(const type of types){
+    const call=f.calls.find(call=>call.method===methods[type]);assert.equal(call[type],'fictional-'+type);
+    if(['sticker','video_note'].includes(type))assert.equal(call.caption,undefined);
+    else assert.match(call.caption,/Shared by Alex/);
+  }
+  // A viewer remains unable to upload any of the newly supported native types.
+  await f.msg(2,'/start p_'+e.viewToken);await f.cb(2,'media-add:'+e.id);
+  await f.msg(2,'',{audio:{file_id:'fictional-denied-audio'}});
+  assert.equal(e.media.length,types.length);
 });
 
 test('viewers cannot upload via callbacks, guessed upload links or stale contributor sessions',async()=>{

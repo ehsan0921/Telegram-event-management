@@ -45,7 +45,7 @@ function harness(events){
     if(className && !(node.className || '').split(' ').includes(className))return false;
     return !!eventId || !!className;
   };
-  const nodes=new Map(['home-upcoming','home-ongoing','event-list','zone-note','events-heading'].map(id=>[id,new El()]));
+  const nodes=new Map(['home-upcoming','home-ongoing','event-list','zone-note','events-heading','stuff-type','stuff-type-label'].map(id=>[id,new El()]));
   const findById=id=>nodes.get(id) || [...nodes.values()].flatMap(descendants).find(node=>node.id===id);
   const calls=[],state={events,preference:{timezone:'Australia/Sydney'}};
   let ui;
@@ -55,7 +55,7 @@ function harness(events){
     dateInZone:instant=>new Date(instant).toISOString().slice(0,10),format:e=>e.title || 'Event time',
     element:(tag,text='',className)=>Object.assign(new El(tag,text),{className}),
     action:(label,fn,className)=>Object.assign(new El('button',label),{onclick:fn,className}),
-    priceTag:()=>new El('span','Free'),priceEstimate:()=>'',
+    priceTag:()=>new El('span','Free'),priceEstimate:()=>'',appendPhotoLinks:()=>{},
     document:{createElement:tag=>new El(tag),getElementById:findById,querySelector:selector=>[...nodes.values()].flatMap(descendants).find(node=>matches(node,selector)),querySelectorAll:selector=>[...nodes.values()].flatMap(descendants).filter(node=>matches(node,selector))},
     openTelegram:spy('chat'),editEvent:spy('edit'),openGuestList:spy('guests'),openNamedLinks:spy('invitations'),
     openCheckin:spy('checkin'),openTicket:spy('ticket'),openGallery:spy('media'),share:spy('share'),openCoHost:spy('cohosts'),showQr:spy('upload'),cancelEvent:spy('cancel'),notice:spy('notice'),
@@ -72,11 +72,23 @@ function harness(events){
 
 const event=(fields={})=>({id:'0123456789abcdef',title:'Community picnic',startsAt:new Date(Date.now()+7200000).toISOString(),endsAt:new Date(Date.now()+14400000).toISOString(),timezone:'Australia/Sydney',group:'Upcoming events',upcoming:true,isOwner:false,isManager:false,status:'yes',approval:'approved',invitationMode:'named',permissions:{},inviteUrl:'https://t.me/test?start=e_0123456789abcdef',...fields});
 
+test('My stuff dropdown separates events and media albums and event navigation resets the filter',()=>{
+  const e=event(),album=event({id:'fedcba9876543210',kind:'photos',title:'Fictional memories',group:'Photo collections'}),f=harness([e,album]);
+  f.ui.renderEvents();
+  assert.deepEqual(f.cards('event-list').map(card=>card.id),['event-card-'+e.id]);
+  f.nodes.get('stuff-type').value='media';f.ui.renderEvents();
+  assert.deepEqual(f.cards('event-list').map(card=>card.id),['event-card-'+album.id]);
+  assert.equal(f.nodes.get('zone-note').hidden,true);
+  f.ui.openEventInApp(e.id);
+  assert.equal(f.nodes.get('stuff-type').value,'events');
+  assert.ok(f.cards('event-list')[0].focused);
+});
+
 test('Home provides app navigation shortcuts alongside event cards',()=>{
   const section=html.slice(html.indexOf('id="home-view"'),html.indexOf('id="events-view"'));
   const shortcuts=section.match(/<nav\b[^>]*class="[^"]*home-shortcuts[^"]*"[^>]*>([\s\S]*?)<\/nav>/)?.[1];
   assert.ok(shortcuts,'Home should have its own shortcut navigation.');
-  for(const [tab,label] of [['events','My events'],['explore','Explore events'],['create','Create']]){
+  for(const [tab,label] of [['events','My stuff'],['explore','Explore events'],['create','Create']]){
     assert.match(shortcuts,new RegExp('<button\\b[^>]*data-tab="'+tab+'"[^>]*>[^<]*'+label+'<\\/button>'));
   }
 });

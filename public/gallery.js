@@ -5,6 +5,10 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
   const urls = new Set();
   const filename = file => file.filename==='photo'?'photo.jpg':file.filename==='video'?'video.mp4':file.filename;
   function showMedia(id,file,blob,url) {
+    $('media-uploader').textContent=file.name ? 'Uploaded by '+file.name : '';
+    $('media-uploader').hidden=!file.name;
+    $('media-caption').textContent=file.caption || '';
+    $('media-caption').hidden=!file.caption;
     $('photo-full').hidden=file.type!=='photo'; $('video-full').hidden=file.type!=='video';
     if(file.type==='photo') { $('photo-full').src=url; $('photo-full').alt=file.caption || 'Shared photo'; }
     else { $('video-full').src=url; }
