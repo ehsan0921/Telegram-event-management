@@ -64,6 +64,8 @@ The bot's main keyboard has two rows:
 
 **Create** asks whether you want an event or a media album. **My stuff** brings together events you host or have joined and albums you can access. In the Mini App, tapping **My stuff ▾** opens a dropdown on the navigation button with **Events** and **Media albums**. **Settings** opens profile settings; **My account** shows your name, timezone and display currency with an option to edit your profile.
 
+Pressing **My stuff** in the bot first shows buttons such as **Event: Community picnic** and **Media album: Holiday memories**. Tap an item to open its details. Events with media viewing enabled also get a media-album button for their gallery.
+
 ### Shared media albums
 
 **My stuff → Media albums** includes standalone albums and galleries from your accessible events when media viewing is enabled, even before any files have been uploaded. Events with media viewing turned off do not appear in this list. Event galleries keep their existing access and upload permissions.

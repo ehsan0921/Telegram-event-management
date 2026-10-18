@@ -53,7 +53,9 @@ test('album keyboard creates collections and lists only accessible active albums
   assert.equal(f.store.data.sessions[1],undefined);
   f.calls.length=0;
   await f.msg(1,'🗂 My stuff');
-  assert.deepEqual(f.calls.slice(2).map(c=>c.text),[own.title,shared.title]);
+  assert.equal(f.calls.length,2);
+  assert.deepEqual(f.calls.at(-1).reply_markup.inline_keyboard.flat().map(b=>b.text),['Media album: '+own.title,'Media album: '+shared.title]);
+  await f.cb(1,`v:${shared.id}`);assert.equal(f.calls.at(-1).text,shared.title);
   await f.msg(1,'➕ Create');
   assert.deepEqual(f.calls.at(-1).reply_markup.inline_keyboard.flat().map(b=>b.callback_data),['nav:new','photos-new']);
   await f.cb(1,'photos-new');
@@ -67,6 +69,26 @@ test('album keyboard creates collections and lists only accessible active albums
   const offline=fixture('');
   await offline.msg(1,'⚙️ Settings');
   assert.match(offline.calls.at(-1).text,/when it is configured/);
+});
+
+test('My stuff lists event and gallery buttons before opening details and rechecks stale album access',async()=>{
+  const f=fixture(),album=photoCollection('Fictional album',2);
+  const e={id:'0123456789abcdef',title:'Fictional event',owner:1,invitationMode:'tickets',guests:{},permissions:{viewMedia:true},media:[]};
+  f.store.data.events[e.id]=e;f.store.data.events[album.id]=album;
+  await f.msg(1,'/start p_'+album.viewToken);f.calls.length=0;
+  await f.msg(1,'🗂 My stuff');
+  assert.equal(f.calls.length,2);
+  const buttons=f.calls.at(-1).reply_markup.inline_keyboard.flat();
+  assert.deepEqual(buttons.map(b=>[b.text,b.callback_data]),[['Event: '+e.title,'v:'+e.id],['Media album: '+album.title,'v:'+album.id],['Media album: '+e.title,'m:'+e.id+':0']]);
+  await f.cb(1,'m:'+e.id+':0');assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.web_app?.url.endsWith('?gallery='+e.id)));
+  album.viewToken='a'.repeat(32);
+  await f.cb(1,'v:'+album.id);
+  assert.ok(!f.calls.at(-1).reply_markup.inline_keyboard?.flat().some(b=>b.web_app));
+  // Keep each Telegram message bounded for accounts with many items.
+  for(let i=0;i<65;i++){const item=photoCollection('Fictional album '+i,1);f.store.data.events[item.id]=item;}
+  f.calls.length=0;await f.msg(1,'🗂 My stuff');
+  const lists=f.calls.filter(c=>c.reply_markup?.inline_keyboard);
+  assert.equal(lists.length,3);assert.ok(lists.every(c=>c.reply_markup.inline_keyboard.length<=30));
 });
 
 test('albums accept native Telegram file types and arbitrary documents while preserving attribution',async()=>{

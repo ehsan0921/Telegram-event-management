@@ -444,14 +444,19 @@ export class Bot {
       const albums=command==='/stuff' ? all.filter(e=>e.kind==='photos' && !e.cancelled && this.mediaAllowed(e,id)) : [];
       const events = all.filter(e => e.kind!=='photos' && this.allowed(e, id) && !e.cancelled && (isManager(e,id) || e.guests[id]?.status !== 'no'));
       if (!events.length && !albums.length) return this.home(id, 'Nothing here yet. Tap Create to make an event or media album, or open an invitation.');
-      await this.home(id, command==='/stuff' ? 'Your stuff — events and media albums.' : '📅 Your events — tap Open event below.');
+      if(command==='/stuff'){
+        const items=[...events.map(e=>button('Event: '+e.title,`v:${e.id}`)),...albums.map(e=>button('Media album: '+e.title,`v:${e.id}`)),...events.filter(e=>e.permissions?.viewMedia===true && this.mediaCan(e,id,'viewMedia')).map(e=>button('Media album: '+e.title,`m:${e.id}:0`))];
+        await this.home(id,'Your stuff — choose an event or media album below.');
+        for(let index=0;index<items.length;index+=30)await this.send(id,index ? 'More of your stuff:' : 'What would you like to open?',keyboard(...items.slice(index,index+30).map(item=>[item])));
+        return;
+      }
+      await this.home(id, '📅 Your events — tap Open event below.');
       for (const group of ['Upcoming events', 'Past events', 'Date not set', 'Cancelled events']) {
         const entries = events.filter(e => eventGroup(e) === group).sort((a,b) => group === 'Past events' ? Date.parse(b.startsAt)-Date.parse(a.startsAt) : Date.parse(a.startsAt)-Date.parse(b.startsAt));
         if (!entries.length) continue;
         await this.send(id, group);
         for (const e of entries) await this.send(id, `${e.cancelled ? '🚫' : '🎉'} ${e.title}\n${this.time(e, id)}\n${priceText(e,this.db.preferences[id],this.pricing || this.db.preferences._pricing)}`, keyboard([button('Open event', `v:${e.id}`)], ...(upcoming(e) ? [[button('🔔 Set reminder', `reminder:${e.id}`)]] : [])));
       }
-      if(albums.length){await this.send(id,'Media albums');for(const album of albums)await this.mediaCard(id,album);}
       return;
     }
     if (command === '/new') {
