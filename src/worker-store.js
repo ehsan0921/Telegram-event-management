@@ -1,4 +1,5 @@
 import { Bot } from './bot.js';
+import {readAlbumMembers} from './album-members.js';
 import {readOnlinePricing} from './exchange.js';
 import { snapshotActive } from './snapshot-mode.js';
 import { mayUseTestApp, TestAccessError } from './test-access.js';
@@ -24,6 +25,7 @@ export async function mutateState(env, action, updateId) {
     const messages = [];
     const bot = new Bot({ data }, async (method, params) => { messages.push({ method, params }); return {}; }, env.BOT_USERNAME, env.APP_URL);
     bot.productionSnapshot = await snapshotActive(env);
+    bot.albumMembersFor=e=>readAlbumMembers(env,e);
     bot.pricing=await readOnlinePricing(env,data.preferences._pricing);
     const settings = [];
     const value = await action(data, bot, {

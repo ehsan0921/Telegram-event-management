@@ -1,5 +1,6 @@
 import {paymentMethod,paidEvent} from './event-payment.js';
 import {qrPhoto} from './telegram-upload.js';
+import {albumMembers} from './album-members.js';
 import {uploadedMedia,mediaMethods,mediaPayload} from './media-preview.js';
 import {startBroadcast,toggleBroadcast,collectBroadcast,sendBroadcast,undoBroadcast} from './guest-messages.js';
 import {invitationMode,claimInvitation,invitationSettings,invitationParticipantMode,oneTimeInvites,invitationAvailable,consumeInvitation,reconcileInvitationClaims} from './invitations.js';
@@ -113,6 +114,7 @@ export class Bot {
       const links=photoLinks(e,this.username);
       rows.push([{text:'Copy viewer link',copy_text:{text:links.viewer}}],[{text:'Copy contributor link',copy_text:{text:links.contributor}}]);
       rows.push([button(showsUploaders(e)?'Uploader names: shown · Hide':'Uploader names: hidden · Show',`photo-names:${e.id}`)]);
+      rows.push([button('👥 Viewers & contributors',`album-members:${e.id}`)]);
       rows.push([button('🗑 Delete media album',`album-delete:${e.id}`)]);
     }
     rows.push([button(menu.home,'nav:home')]);
@@ -603,6 +605,12 @@ export class Bot {
     const [action, eid, arg, version] = (q.data || '').split(':');
     const e = this.db.events[eid];
     if(q.id)await this.api('answerCallbackQuery', { callback_query_id: q.id }).catch(() => {});
+    if(action==='album-members'){
+      if(e?.kind!=='photos' || e.owner!==id || e.cancelled)return this.send(id,'Only the album owner can view this access list.');
+      const members=this.albumMembersFor ? await this.albumMembersFor(e) : albumMembers(e,this.db.preferences,this.db.users);
+      const groups=['viewer','contributor'].map(role=>{const names=members.filter(member=>member.role===role);return `${role==='viewer'?'Viewers':'Contributors'} (${names.length})\n${names.length?names.map(member=>'• '+member.name).join('\n'):'None yet'}`;});
+      return this.long(id,`${e.title}\n\n${groups.join('\n\n')}\n\nShows current access from opened links, not everyone who received a link. Contributors may not have uploaded yet.`,keyboard([button('Back to album',`v:${e.id}`)]));
+    }
     if(['album-delete','album-delete-confirm'].includes(action)){
       if(e?.kind!=='photos' || e.owner!==id)return this.send(id,'Only the album owner can delete this media album.');
       if(action==='album-delete')return this.send(id,`Permanently delete media album “${e.title}” and its saved media references? Sharing links will stop working. Files already sent to Telegram chats will remain.`,keyboard([button('Yes, delete album',`album-delete-confirm:${e.id}`)],[button('Keep album',`v:${e.id}`)]));

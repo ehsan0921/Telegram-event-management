@@ -1,4 +1,5 @@
 import {parseEventPayment,paymentMethod,paidEvent} from './event-payment.js';
+import {readAlbumMembers} from './album-members.js';
 import {guestMessageApi} from './guest-message-api.js';
 import {issueTicket,verifyTicket} from './tickets.js';
 import {profileFields,profilePreference,profilePhotoApi} from './profile.js';
@@ -145,6 +146,13 @@ async function miniApiForUser(request, env, user) {
   const path = new URL(request.url).pathname;
   const profileResponse=await profilePhotoApi(request,env,user);if(profileResponse)return profileResponse;
   const eventMatch=path.match(/^\/api\/events\/([a-f0-9]{16})$/);
+  const albumMembersMatch=path.match(/^\/api\/collections\/([a-f0-9]{16})\/members$/);
+  if(albumMembersMatch && request.method==='GET'){
+    const row=await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(albumMembersMatch[1]).first();
+    const album=row && JSON.parse(row.data);
+    if(album?.kind!=='photos' || album.owner!==user.id || album.cancelled)return respond({error:'Only the album owner can view this access list.'},403);
+    return respond({members:await readAlbumMembers(env,album)});
+  }
   if(eventMatch && request.method==='GET'){
     const row=await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(eventMatch[1]).first();const e=row && JSON.parse(row.data);
     if(!e || (!isManager(e,user.id) && (!e.guests[user.id] || !invitationAvailable(e,user.id))))return respond({error:'Open a valid invitation first.'},403);
