@@ -1,4 +1,24 @@
 import {isManager} from './cohosts.js';
+import {randomBytes} from 'node:crypto';
+
+export function photoCollection(title,owner,showUploaders=true) {
+  return {id:randomBytes(8).toString('hex'),kind:'photos',title,owner,showUploaders,invitationMode:'tickets',isPublic:false,guests:{},media:[],cancelled:false,createdAt:new Date().toISOString(),permissions:{guestList:false,viewMedia:true,uploadMedia:true},allowLinkUploads:true,uploadToken:randomBytes(16).toString('hex'),viewToken:randomBytes(16).toString('hex'),qrEnabled:true,location:'',description:'',questions:[],defaultReminder:0};
+}
+export const showsUploaders=e=>e.kind!=='photos' || e.showUploaders!==false;
+export function mediaRole(e,id,preference={}) {
+  if(!e || e.cancelled)return null;
+  if(isManager(e,id))return 'owner';
+  const token=preference.mediaAccess?.[e.id];
+  if(token && token===e.viewToken && e.kind==='photos')return 'viewer';
+  if(token && token===e.uploadToken && uploadLink(e,''))return 'contributor';
+  return null;
+}
+export function mediaCan(e,id,key,preference={}) {
+  const role=mediaRole(e,id,preference);
+  if(e?.kind==='photos')return ['viewMedia','uploadMedia'].includes(key) && (role==='owner' || role==='contributor' || role==='viewer' && key==='viewMedia');
+  return can(e,id,key);
+}
+export const photoLinks=(e,username)=>e.kind==='photos' && !e.cancelled ? {viewer:`https://t.me/${username}?start=p_${e.viewToken}`,contributor:uploadLink(e,username)} : null;
 
 export const permissionLabels = { guestList: 'See other guests', uploadMedia: 'Send photos, videos & files', viewMedia: 'See shared media' };
 export const asksPhone=e=>e.askPhone === true;

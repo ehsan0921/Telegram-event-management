@@ -96,6 +96,7 @@ function dateInZone(instant, zone) {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 function format(e, zone = selectedZone()) {
+  if(e.kind==='photos')return 'Photo collection';
   if (!e.startsAt) return e.when + '\nTimezone not set — shown as entered by the organiser.';
   let text = new Intl.DateTimeFormat('en-AU', { timeZone: zone, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(e.startsAt)) + ` (${zone})`;
   if (e.endsAt) {
@@ -108,6 +109,45 @@ function format(e, zone = selectedZone()) {
   return text;
 }
 function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener'); }
+function appendPhotoLinks(node,event){
+  if(event.isOwner){
+    const label=element('label','','check-option'),input=element('input');input.type='checkbox';input.checked=event.showUploaders!==false;
+    input.onchange=async()=>{
+      input.disabled=true;
+      try{const result=await api(`collections/${event.id}/settings`,{showUploaders:input.checked});Object.assign(event,result.event);await refresh();notice(input.checked?'Uploader names are shown.':'Uploader names are hidden.');}
+      catch(error){input.checked=event.showUploaders!==false;notice(error.message);}
+      finally{input.disabled=false;}
+    };
+    label.append(input,element('span','Show who uploaded media'));node.append(label);
+  }
+  for(const [role,link] of Object.entries(event.photoLinks || {})){
+    node.append(action('Share '+role+' link',()=>openTelegram('https://t.me/share/url?url='+encodeURIComponent(link))));
+    const label=element('label',role==='viewer'?'Viewer — browse only':'Contributor — browse and add media');
+    const input=element('input');input.value=link;input.readOnly=true;input.setAttribute('aria-label',role+' link');input.onclick=()=>input.select();
+    label.append(input);node.append(label);
+  }
+}
+function setupPhotoCreation(){
+  $('photo-create-panel').ontoggle=()=>{
+    if(compactPicker || activeEvent)return;
+    const photos=$('photo-create-panel').open;
+    $('event-form').hidden=photos;
+    $('success').hidden=true;
+    $('form-title').textContent=photos?'Share your memories.':'Make a plan.';
+    $('form-description').textContent=photos?'Create a collection and choose which link to share.':'Pick a date. Share an invite. Let the good times follow.';
+  };
+  let photoRequestId=crypto.randomUUID();
+  $('photo-form').onsubmit=async event=>{
+    event.preventDefault();const button=$('photo-create');if(button.disabled)return;
+    button.disabled=true;$('photo-error').hidden=true;
+    try{
+      const result=await api('collections',{title:$('photo-title').value,showUploaders:$('photo-show-uploaders').checked,requestId:photoRequestId});
+      const links=$('photo-links');links.replaceChildren(element('h3',result.event.title),action('Open collection',()=>openGallery(result.event.id)));appendPhotoLinks(links,result.event);links.hidden=false;
+      await refresh();photoRequestId=crypto.randomUUID();
+    }catch(error){$('photo-error').textContent=error.message;$('photo-error').hidden=false;}
+    finally{button.disabled=false;}
+  };
+}
 let guestListBaseline='';
 function invitationGuestLine(guest){return guest.name+(guest.participantMode==='ask' ? ' = ?' : guest.participants ? ' = '+guest.participants+(guest.participantMode==='confirm' ? '!' : guest.participantMode==='fixed' ? '*' : '') : '');}
 function guestNamesIn(text){return text.split('\n').map(line=>line.split('=')[0].trim()).filter(Boolean);}
@@ -385,6 +425,10 @@ function renderEvents() {
   for (const e of events) {
     if (listFilter === 'all' && e.group !== lastGroup) { list.append(element('h2', e.group, 'event-group')); lastGroup = e.group; }
     const card = element('article', '', 'event-card');card.id='event-card-'+e.id;card.tabIndex=-1;
+    if(e.kind==='photos'){
+      card.append(element('span','PHOTO SHARING','tag'),element('h3',e.title),action('Open collection',()=>openGallery(e.id)));
+      appendPhotoLinks(card,e);list.append(card);continue;
+    }
     if (e.hasBanner) {
       const img = document.createElement('img'); img.className = 'event-banner'; img.alt = `Banner for ${e.title}`; card.append(img);
       fetch(`/api/events/${e.id}/banner`, { headers: { Authorization: 'tma ' + initData } }).then(r => { if (!r.ok) throw new Error(); return r.blob(); }).then(blob => { if (!img.isConnected) return; const old = bannerUrls.get(e.id); if (old) URL.revokeObjectURL(old); const url = URL.createObjectURL(blob); bannerUrls.set(e.id,url); img.src=url; }).catch(() => img.remove());
@@ -619,6 +663,8 @@ async function loadBannerPreview(id,generation){
   }catch(error){if(generation===bannerLoadGeneration)window.reportAppError?.(error,'Banner preview');}
 }
 function setupForm(event = null) {
+  $('photo-create-panel').hidden=compactPicker || !!event;
+  $('photo-create-panel').open=false;
   if(formSaving){notice('Your event is saving. Please wait.');return;}
   formReady=true;
   activeEvent = event; createdEvent = null; requestId = crypto.randomUUID();
@@ -1038,6 +1084,7 @@ $('profile-photo-form').onsubmit=async event=>{
 };
 $('profile-photo-remove').onclick=async()=>{const button=$('profile-photo-remove');button.disabled=true;try{const r=await fetch('/api/profile/photo',{method:'DELETE',headers:{Authorization:'tma '+initData}});if(!r.ok)throw Error('Could not remove photo.');state.preference.hasPhoto=false;button.hidden=true;await loadProfilePhoto();$('profile-photo-status').textContent='Photo removed.';}catch(error){$('profile-photo-status').textContent=error.message;}finally{button.disabled=false;}};
 $('another-event').onclick = () => go('events');
+setupPhotoCreation();
 if (!initData) {
   notice('This launch did not include your Telegram login. Reopen using App in the bot menu or the App button in a message.');
   const empty=element('div','Your events are private. Use the authenticated App button to load them.','empty');

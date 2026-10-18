@@ -12,7 +12,7 @@ import { issueTicket } from './tickets.js';
 import { randomBytes } from 'node:crypto';
 import { invoice, checkout, successful, orderFor, requestRefund, refundResult } from './payments.js';
 import { eventTime, InputError } from './time.js';
-import { uploadLink, shareUploadLink,asksPhone,asksComments,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
+import { photoCollection,photoLinks,showsUploaders,mediaRole,mediaCan,uploadLink, shareUploadLink,asksPhone,asksComments,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
 import { upcoming, eventGroup, setReminder, reminderOptions, reminderLabel, applyDefaultReminder } from './reminders.js';
 import { permissions, permissionLabels, can, guests, confirmed, canSeeLocation, responsesClosed, responseCounts, participantCount } from './permissions.js';
 
@@ -27,7 +27,7 @@ const hasRecordedResponse = guest => typeof guest?.responseRecorded==='boolean' 
 const menu = { new: '🎉 Create event', events: '📅 My events', help: '❓ Help', home: '🏠 Main menu', cancel: '✖️ Cancel input', skip: '⏭ Skip', done: '✅ Finish uploads', name: '👤 Use Telegram name', app: 'App', picker: '🗓 Pick date & time', pending: '⏳ Pending invitations' };
 const reply = (...rows) => ({ keyboard: rows.map(row => row.map(text => typeof text === 'string' ? { text } : text)), resize_keyboard: true, is_persistent: true });
 // The authenticated App launcher lives in Telegram's built-in chat menu.
-const homeKeyboard = () => reply([menu.new, menu.events], [menu.help]);
+const homeKeyboard = () => reply([menu.new, menu.events], ['📷 Photo sharing',menu.help]);
 
 export class Bot {
   constructor(store, api, username, appUrl) { this.store = store; this.api = api; this.username = username; this.appUrl = appUrl; this.store.data.preferences ||= {}; }
@@ -99,12 +99,19 @@ export class Bot {
     return 'Last updated: ' + formatted;
   }
   allowed(e, id) { return e && (isManager(e,id) || !!e.guests[id] && invitationAvailable(e,id)); }
-  mediaAllowed(e, id) { return e && (this.allowed(e, id) || (this.db.preferences[id]?.mediaAccess?.[e.id] === e.uploadToken && !!uploadLink(e, this.username))); }
+  mediaAllowed(e, id) { return e && (e.kind==='photos' ? !!mediaRole(e,id,this.db.preferences[id]) : this.allowed(e, id) || !!mediaRole(e,id,this.db.preferences[id])); }
+  mediaCan(e,id,key) { return mediaCan(e,id,key,this.db.preferences[id]); }
   async mediaCard(id, e) {
     if (!this.mediaAllowed(e, id) || e.cancelled) return this.home(id, 'This media link is unavailable.');
     const rows=[];
-    if (can(e,id,'uploadMedia')) rows.push([button('📎 Add media',`media-add:${e.id}`)]);
-    if (this.appUrl && can(e,id,'viewMedia')) rows.push([this.miniButton('🗂 Shared media',`?gallery=${e.id}`)]);
+    if (this.mediaCan(e,id,'uploadMedia')) rows.push([button('📎 Add media',`media-add:${e.id}`)]);
+    if (this.appUrl && this.mediaCan(e,id,'viewMedia')) rows.push([this.miniButton('🗂 Shared media',`?gallery=${e.id}`)]);
+    if (!this.appUrl && this.mediaCan(e,id,'viewMedia')) rows.push([button('🗂 Shared media',`m:${e.id}:0`)]);
+    if(e.kind==='photos' && e.owner===id){
+      const links=photoLinks(e,this.username);
+      rows.push([{text:'Share viewer link',url:`https://t.me/share/url?url=${encodeURIComponent(links.viewer)}`}],[{text:'Share contributor link',url:`https://t.me/share/url?url=${encodeURIComponent(links.contributor)}`}]);
+      rows.push([button(showsUploaders(e)?'Uploader names: shown · Hide':'Uploader names: hidden · Show',`photo-names:${e.id}`)]);
+    }
     rows.push([button(menu.home,'nav:home')]);
     if (e.banner) return this.api('sendPhoto',{chat_id:id,photo:e.banner,caption:e.title,reply_markup:keyboard(...rows)});
     return this.send(id,e.title,keyboard(...rows));
@@ -241,6 +248,7 @@ export class Bot {
     this.db.events[e.id] = e; this.session(id); await this.home(id, invitationMode(e)==='named'?'🎉 Event ready! Open Personal invitations to share guest links.':'🎉 Event ready! Tap Share ticket link to invite people.'); return this.card(id, e);
   }
   async card(id, e, withBanner = true) {
+    if(e.kind==='photos')return this.mediaCard(id,e);
     const owner=e.owner===id,host = isManager(e,id);
     const counted = responseCounts(e);
     let counts = can(e, id, 'guestList') ? [`People coming: ${counted.participants}`, ...(counted.pending ? [`People awaiting approval: ${counted.pendingParticipants}`] : []), ...Object.keys(labels).map(s => `${labels[s]}: ${counted[s]}`), ...(counted.pending ? [`⏳ Awaiting approval: ${counted.pending}`] : []), ...(counted.awaitingPayment ? [`⭐ Awaiting payment: ${counted.awaitingPayment}`] : [])].join('\n') : `Your response: ${e.guests[id]?.status === 'yes' && !confirmed(e, e.guests[id]) ? paidEvent(e) && (!requiresApproval(e) || e.guests[id]?.approval === 'approved') ? 'Awaiting payment' : 'Awaiting organiser approval' : labels[e.guests[id]?.status] || 'Not submitted'}`;
@@ -331,6 +339,7 @@ export class Bot {
       if(text==='Done' || text==='📨 Send message')return sendBroadcast(this,id,event);
       return collectBroadcast(this,id,event,m);
     }
+    if(text==='📷 Photo sharing'){this.session(id,{step:'photo-title'});return this.prompt(id,'Photo collection name? (up to 100 characters)');}
     if(text===menu.new)return startChatCreation(this,id);
     const navigation = { [menu.new]: '/new', [menu.events]: '/events', [menu.help]: '/help', [menu.home]: '/start', [menu.cancel]: '/cancel', [menu.app]: '/app', [menu.picker]: '/picker', [menu.pending]: '/pending' };
     if (['📱 Open app','📱 Open planner','📱 Open XEvents planner'].includes(text)) text = '/app';
@@ -365,10 +374,18 @@ export class Bot {
     if (command === '/start') {
       if (this.appUrl) await this.api('setChatMenuButton', { chat_id: id, menu_button: { type: 'web_app', text: 'App', web_app: { url: this.appUrl } } });
       this.session(id);
+      const photoMatch=text.match(/^\/start(?:@\w+)? p_([a-f0-9]{32})$/);
+      if(photoMatch){
+        const e=Object.values(this.db.events).find(e=>e.kind==='photos' && !e.cancelled && e.viewToken===photoMatch[1]);
+        if(!e)return this.home(id,'This photo-sharing link is unavailable.');
+        this.db.preferences[id] ||= {};this.db.preferences[id].mediaAccess ||= {};
+        this.db.preferences[id].mediaAccess[e.id]=photoMatch[1];
+        return this.mediaCard(id,e);
+      }
       const uploadMatch = text.match(/^\/start(?:@\w+)? (u_([a-f0-9]{32})|a_([a-f0-9]{16}))$/);
       if (uploadMatch) {
         const e = uploadMatch[2] ? Object.values(this.db.events).find(e => e.uploadToken === uploadMatch[2] && uploadLink(e, this.username)) : this.db.events[uploadMatch[3]];
-        if (!e || e.cancelled || (!uploadMatch[2] && (!this.mediaAllowed(e, id) || !can(e, id, 'uploadMedia')))) return this.home(id, 'This upload link is unavailable.');
+        if (!e || e.cancelled || (!uploadMatch[2] && (!this.mediaAllowed(e, id) || !this.mediaCan(e, id, 'uploadMedia')))) return this.home(id, 'This upload link is unavailable.');
         if (uploadMatch[2]) { this.db.preferences[id] ||= {}; this.db.preferences[id].mediaAccess ||= {}; this.db.preferences[id].mediaAccess[e.id] = uploadMatch[2]; }
         this.session(id, { step: 'media', event: e.id });
         return this.mediaCard(id,e);
@@ -390,6 +407,7 @@ export class Bot {
       if (match) {
         const e = this.db.events[match[1]];
         if (!e) return this.send(id, 'This invitation is unavailable. Ask the organiser for a new link.');
+        if(e.kind==='photos')return this.mediaCard(id,e);
         if(invitationMode(e)==='named' && !isManager(e,id) && !e.guests[id])return this.home(id,'Ask the organiser for your personal invitation link.');
         if(!isManager(e,id) && !invitationAvailable(e,id))return this.home(id,'This invitation has already been used by another guest. Ask the organiser for your own link.');
         if (!e.cancelled && !isManager(e,id) && !e.guests[id]) e.guests[id] = { name: name(m.from), status: 'later', comment: '', answers: [], phone: '' };
@@ -418,6 +436,11 @@ export class Bot {
     if (text.startsWith('/') && command !== '/skip' && command !== '/done') return this.send(id, 'Choose a menu button, or tap Cancel input to leave this step.', current ? this.inputKeyboard(current) : homeKeyboard());
     const s = this.db.sessions[id];
     if (!s) return this.home(id, 'Choose Create event or My events below.');
+    if(s.step==='photo-title'){
+      if(!text || text.length>100)return this.prompt(id,'Use a collection name of 1–100 characters.');
+      const collection=photoCollection(text,id);this.db.events[collection.id]=collection;this.session(id);
+      await this.home(id,'Photo collection ready. Share a viewer or contributor link.');return this.mediaCard(id,collection);
+    }
     if(s.flow==='chat-create')return chatCreationMessage(this,id,typeof m.text==='string'?m.text.trim():text,s,m);
     if (s.step === 'banner') {
       const target = s.draft || this.db.events[s.event];
@@ -437,7 +460,7 @@ export class Bot {
       this.session(id);await this.home(id,'Co-host link created.');return this.cohostEntryCard(id,e,entry.id);
     }
     const linkUploader = s.step === 'upload' && e && s.uploadToken && s.uploadToken === e.uploadToken && !!uploadLink(e, this.username);
-    if ((!this.allowed(e, id) && !linkUploader) || e.cancelled) { this.session(id); return this.send(id, 'This event is no longer available for changes.'); }
+    if ((!this.allowed(e, id) && !linkUploader) || e.cancelled || e.kind==='photos' && (s.step!=='upload' || !this.mediaCan(e,id,'uploadMedia'))) { this.session(id); return this.send(id, 'This event is no longer available for changes.'); }
     const g = e.guests[id];
     if (s.response && isManager(e,id)) { this.session(id); return this.card(id, e); }
     if (s.response && responsesClosed(e)) { this.session(id); await this.home(id, 'The response deadline has passed.'); return this.card(id, e); }
@@ -579,14 +602,23 @@ export class Bot {
       return this.creationPermissions(id, s);
     }
     if(action==='nav' && eid==='new')return startChatCreation(this,id);
+    if(action==='photos-new'){this.session(id,{step:'photo-title'});return this.prompt(id,'Photo collection name? (up to 100 characters)');}
+    if(action==='photo-names'){
+      if(e?.kind!=='photos' || e.owner!==id || e.cancelled)return this.home(id,'Only the collection owner can change this setting.');
+      e.showUploaders=!showsUploaders(e);return this.mediaCard(id,e);
+    }
     if (action === 'nav' && ['home', 'events', 'pending'].includes(eid)) return this.handle({ message: { from: q.from, chat: { id, type: 'private' }, text: { home: '/start', events: '/events', pending: '/pending' }[eid] } });
     if (action === 'media-add') {
-      if (!this.mediaAllowed(e,id) || e.cancelled || !can(e,id,'uploadMedia')) return this.home(id,'The organiser has disabled these uploads.');
+      if (!this.mediaAllowed(e,id) || e.cancelled || !this.mediaCan(e,id,'uploadMedia')) return this.home(id,'The organiser has disabled these uploads.');
       const token=this.db.preferences[id]?.mediaAccess?.[e.id];
       this.session(id,{step:'upload',event:e.id,mediaOnly:true,uploads:0,uploadToken:token===e.uploadToken ? token : null});
       return this.prompt(id,'Send photos, videos, or files, then tap Finish uploads.');
     }
-    if (!this.allowed(e, id)) return this.send(id, 'Open a valid invitation link first.');
+    if(e?.kind==='photos'){
+      if(!['m','v','remove'].includes(action) || !this.mediaAllowed(e,id) || action==='remove' && e.owner!==id)return this.home(id,'Use the photo collection buttons.');
+      if(action==='v')return this.mediaCard(id,e);
+    }
+    if (!this.allowed(e, id) && !(e?.kind==='photos' && action==='m' && this.mediaCan(e,id,'viewMedia'))) return this.send(id, 'Open a valid invitation link first.');
     if (action === 'star-terms') return this.paymentInfo(id,e);
     if(action==='manual-report')return manualReport(this,id,e);
     if(action==='manual-confirm' || action==='manual-clear' || action==='manual-clear-confirm'){
@@ -738,7 +770,7 @@ export class Bot {
       if (!media.length) return this.send(id, 'No shared media on this page yet.', keyboard(...(can(e, id, 'uploadMedia') ? [[button('📎 Add media', `u:${eid}`)]] : []), [button('Back to event', `v:${eid}`)]));
       for (const f of media) {
         const method = { photo: 'sendPhoto', video: 'sendVideo', document: 'sendDocument' }[f.type];
-        await this.api(method, { chat_id: id, [f.type]: f.fileId, caption: `Shared by ${f.name}${f.caption ? '\n' + f.caption : ''}`, ...(isManager(e,id) ? { reply_markup: keyboard([button('Remove from event', `remove:${eid}:${f.id}`)]) } : {}) });
+        await this.api(method, { chat_id: id, [f.type]: f.fileId, caption: [showsUploaders(e)?`Shared by ${f.name}`:'Shared media',f.caption].filter(Boolean).join('\n'), ...(isManager(e,id) ? { reply_markup: keyboard([button('Remove from event', `remove:${eid}:${f.id}`)]) } : {}) });
       }
       const nav = [];
       if (page > 0) nav.push(button('← Previous', `m:${eid}:${page - 1}`));

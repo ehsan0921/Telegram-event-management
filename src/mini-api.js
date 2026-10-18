@@ -11,7 +11,7 @@ import { authenticate } from './mini-auth.js';
 import { mayUseTestApp, testAccessMessage, TestAccessError, whitelistStatus, applyWhitelistChange } from './test-access.js';
 import { parsePricing, currencyCodes, localCurrency } from './pricing.js';
 import { mediaApi } from './media-api.js';
-import { shareUploadLink,asksPhone,asksComments,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
+import { photoCollection,photoLinks,shareUploadLink,asksPhone,asksComments,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
 import { isSuperAdmin, rememberUser, adminOverview, adminAnalytics, adminUserCount } from './admin.js';
 import { schedule, timezone, InputError } from './time.js';
 import { mutateState, BusyError } from './worker-store.js';
@@ -86,6 +86,7 @@ export function publicEvent(e, id, username) {
   const manager=isManager(e,id),owner=e.owner===id;
   const entries=cohostEntries(e),cohosts=entries.filter(entry=>entry.status==='active' && entry.cohost).map(entry=>entry.cohost);
   return {
+    kind:e.kind || 'event',...(e.kind==='photos' ? {showUploaders:e.showUploaders!==false} : {}),...(owner && e.kind==='photos' ? {photoLinks:photoLinks(e,username)} : {}),
     invitationMode:invitationMode(e),guestName:e.owner!==id ? e.guests[id]?.name || null : null,
     askPhone:asksPhone(e),askComments:asksComments(e),
     ...(manager ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,responded:hasRecordedResponse(g,invitationHistory(e,g.invitationToken),Number(uid)),approval:g.status==='yes' ? requiresApproval(e) ? g.approval || 'pending' : 'approved' : null,confirmed:confirmed(e,g),participants:participantCount(e,g),paymentStatus:g.payment?.status || null})),...Object.entries(e.invitees || {}).filter(([token])=>!Object.values(e.guests).some(g=>g.invitationToken===token)).map(([token,g])=>({id:null,name:g.name,status:'unopened',responded:false,participants:participantCount(e,{...g,invitationToken:token}),confirmed:false}))]} : {}),
@@ -105,7 +106,7 @@ export function publicEvent(e, id, username) {
     mediaCount: can(e, id, 'viewMedia') ? e.media?.length || 0 : null,
     imageCount: can(e, id, 'viewMedia') ? e.media?.filter(f => f.type === 'photo').length || 0 : null,
     ...(manager ? { allowLinkUploads: !!e.allowLinkUploads, uploadLink: shareUploadLink(e, username) } : {}),
-    group: eventGroup(e), upcoming: upcoming(e), reminder: e.reminders?.[id]?.minutes || 0, hasBanner: !!e.banner,
+    group: e.kind==='photos'?'Photo collections':eventGroup(e), upcoming: upcoming(e), reminder: e.reminders?.[id]?.minutes || 0, hasBanner: !!e.banner,
     askParticipantCount: asksParticipantCount(e), participants: e.guests[id]?.status === 'yes' ? participantCount(e, e.guests[id]) : null, requireApproval: requiresApproval(e), hideLocation: hidesLocation(e),
     responseDeadline: e.responseDeadline || null, responsesClosed: responsesClosed(e), deadlineDate: e.deadlineDate || '', deadlineTime: e.deadlineTime || '', deadlineTimezone: e.deadlineTimezone || e.timezone || null,
     ...(manager ? { ticketInfo: e.ticketInfo || '' } : {}),
@@ -303,10 +304,25 @@ async function miniApiForUser(request, env, user) {
         Object.assign(data.preferences[id],profileFields(input));
         return { preference: profilePreference(data.preferences[id]) };
       }
-      if (path === '/api/events') {
+      const photoSettings=path.match(/^\/api\/collections\/([a-f0-9]{16})\/settings$/);
+      if(photoSettings){
+        const e=data.events[photoSettings[1]];
+        if(e?.kind!=='photos' || e.owner!==id || e.cancelled)throw new InputError('Only the collection owner can change this setting.');
+        if(typeof input.showUploaders!=='boolean')throw new InputError('Choose whether to show uploader names.');
+        e.showUploaders=input.showUploaders;
+        return {event:publicEvent(e,id,env.BOT_USERNAME)};
+      }
+      if (path === '/api/events' || path === '/api/collections') {
         if (!/^[a-f0-9-]{36}$/.test(input.requestId || '')) throw new InputError('Refresh the planner and try again.');
         const existing = Object.values(data.events).find(e => e.owner === id && e.createRequestId === input.requestId);
         if (existing) return { event: publicEvent(existing, id, env.BOT_USERNAME) };
+        if(path==='/api/collections') {
+          if(input.showUploaders!==undefined && typeof input.showUploaders!=='boolean')throw new InputError('Choose whether to show uploader names.');
+          const e=photoCollection(field(input.title,'Collection name',100,true),id,input.showUploaders ?? true);
+          e.createRequestId=input.requestId;data.events[e.id]=e;
+          await bot.card(id,e);
+          return {event:publicEvent(e,id,env.BOT_USERNAME)};
+        }
         const title = field(input.title, 'Event name', 100, true);
         const location = field(input.location ?? '', 'Location', 300);
         const description = field(input.description ?? '', 'Description', 1500);
