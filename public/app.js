@@ -10,6 +10,29 @@ const compactPicker = picker || deadlinePicker;
 const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 let state = { events: [], preference: {} }, activeEvent = null, createdEvent = null, previewSequence = 0;
 let requestId = crypto.randomUUID();
+let stuffLeaving=false;
+function leaveStuff(event){
+  if(isManager(event) || stuffLeaving || formSaving)return;
+  const dialog=$('stuff-leave-dialog'),album=event.kind==='photos',past=event.cancelled || Number.isFinite(Date.parse(event.endsAt || event.startsAt)) && Date.parse(event.endsAt || event.startsAt)<=Date.now();
+  stuffLeaving=true;
+  $('stuff-leave-title').textContent=album?'Leave media album?':'Remove invitation?';
+  $('stuff-leave-message').textContent=album ? 'This album will disappear from My stuff. Your uploaded files remain. Open a valid sharing link to rejoin.' : past ? 'Remove this invitation from My stuff? Your RSVP and history will be kept. The organiser will not be notified.' : 'Remove this invitation from My stuff? Your RSVP stays unchanged unless you choose to cancel it and notify the organiser. Payment, check-in and response-deadline protections still apply.';
+  $('stuff-leave-notify-option').hidden=album || past;$('stuff-leave-notify').checked=false;$('stuff-leave-error').hidden=true;
+  const controls=['stuff-leave-confirm','stuff-leave-back','stuff-leave-close'];for(const id of controls)$(id).disabled=false;
+  let busy=false;
+  const close=()=>{if(!busy)dialog.close();};
+  $('stuff-leave-back').onclick=close;$('stuff-leave-close').onclick=close;
+  dialog.oncancel=event=>{if(busy)event.preventDefault();};dialog.onclose=()=>{stuffLeaving=false;};
+  $('stuff-leave-confirm').onclick=async()=>{
+    if(busy)return;busy=true;for(const id of controls)$(id).disabled=true;
+    try{
+      await api(`${album?'collections':'events'}/${event.id}/leave`,{confirm:true,...(!album?{notify:!past && $('stuff-leave-notify').checked,version:event.responseVersion || 0}:{})});
+    }catch(error){$('stuff-leave-error').textContent=error.message;$('stuff-leave-error').hidden=false;busy=false;for(const id of controls)$(id).disabled=false;return;}
+    state.events=state.events.filter(item=>item.id!==event.id);busy=false;dialog.close();go('events');notice(album?'You left the media album. Uploaded files were kept.':'Invitation removed from My stuff.');
+    try{await refresh();}catch(error){notice('Saved. Could not refresh: '+error.message);}
+  };
+  dialog.showModal();$('stuff-leave-back').focus();
+}
 let formReady=false,formSaving=false,currentView='home',pageNavigationGeneration=0;
 function isManager(event){return event?.isManager===true || event?.isOwner===true;}
 function oneTimeInviteEnabled(event){return event?.oneTimeInvite ?? (event?.invitationMode==='named');}
@@ -432,8 +455,9 @@ function renderEvents() {
   const list = $('event-list'); list.replaceChildren();
   $('events-heading').textContent = listFilter === 'pending' ? 'Pending invitations' : 'My stuff';
   const media=listFilter!=='pending' && $('stuff-type')?.value==='media';
+  const scopes=$('stuff-scopes'),scope=scopes?.dataset.scope || 'all';if(scopes)scopes.hidden=!media;
   $('zone-note').hidden=media;
-  const events = [...state.events].filter(e => (media ? e.kind==='photos' || e.permissions?.viewMedia===true : e.kind!=='photos') && !e.cancelled && (isManager(e) || e.status !== 'no') && (listFilter !== 'pending' || (!isManager(e) && e.invitationMode!=='tickets' && e.status === 'later'))).sort((a, b) => (a.startsAt || '').localeCompare(b.startsAt || ''));
+  const events = [...state.events].filter(e => (media ? e.kind==='photos' || e.permissions?.viewMedia===true : e.kind!=='photos') && (!media || scope==='all' || (scope==='own'?e.isOwner:!e.isOwner)) && !e.cancelled && (isManager(e) || e.status !== 'no') && (listFilter !== 'pending' || (!isManager(e) && e.invitationMode!=='tickets' && e.status === 'later'))).sort((a, b) => (a.startsAt || '').localeCompare(b.startsAt || ''));
   if (!events.length) { const empty = element('div', '', 'empty'); empty.append(element('strong', listFilter === 'pending' ? 'You’re all caught up.' : media ? 'No media albums yet.' : 'A calendar full of possibilities.'), element('span', listFilter === 'pending' ? 'No unanswered invitations.' : media ? 'Create a media album, or open a shared album link in the bot.' : 'Create your first event, or open an invitation in the bot to join one.')); list.append(empty); }
   let lastGroup;
   events.sort((a,b) => ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(a.group) - ['Upcoming events','Past events','Date not set','Cancelled events'].indexOf(b.group) || (a.group === 'Past events' ? (b.startsAt || '').localeCompare(a.startsAt || '') : (a.startsAt || '').localeCompare(b.startsAt || '')));
@@ -443,7 +467,9 @@ function renderEvents() {
     const card = element('article', '', 'event-card');card.id='event-card-'+e.id;card.tabIndex=-1;
     if(media){
       card.append(element('span',e.kind==='photos'?'MEDIA ALBUM':'EVENT GALLERY','tag'),element('h3',e.title),action('Open album',()=>openGallery(e.id)));
+      card.append(element('span',e.isOwner?'OWNER':e.isCoHost?'CO-HOST':e.mediaRole==='contributor'?'CONTRIBUTOR':'VIEWER','tag'));
       if(e.kind==='photos')appendPhotoLinks(card,e);
+      if(!isManager(e))card.append(action(e.kind==='photos'?'Leave media album':'Remove invitation',()=>leaveStuff(e),'danger-button'));
       list.append(card);continue;
     }
     if (e.hasBanner) {
@@ -485,6 +511,7 @@ function renderEvents() {
     }
     if (isManager(e) && e.uploadLink) extraActions.append(e.qrEnabled!==false ? action('📎 Upload link & QR', () => showQr(e.id)) : action('📤 Share upload link',()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(e.uploadLink)}`)));
     if(e.isOwner && !e.cancelled)extraActions.append(action('🛑 Cancel event',()=>cancelEvent(e),'danger-button'));
+    if(!isManager(e))extraActions.append(action('Remove invitation',()=>leaveStuff(e),'danger-button'));
     if (e.location) extraActions.append(action('📍 Copy address', async () => { try { await navigator.clipboard.writeText(e.location); notice('✓ Address copied.'); } catch { notice('Select and copy the address shown on the event.'); } }));
     if (e.upcoming && (isManager(e) || e.status==='yes')) {
       const label = element('label', '🔔 Event reminder'); const select = document.createElement('select'); select.setAttribute('aria-label', `Reminder for ${e.title}`);
@@ -1016,6 +1043,18 @@ $('create-kind-event').onclick=()=>chooseCreation('event');
 $('create-kind-photos').onclick=()=>chooseCreation('photos');
 $('create-kind-close').onclick=()=>$('create-kind-dialog').close();
 $('stuff-type').onchange=()=>renderEvents();
+for(const button of document.querySelectorAll('[data-stuff-scope]')){
+  button.onclick=()=>{
+    $('stuff-scopes').dataset.scope=button.dataset.stuffScope;
+    for(const tab of document.querySelectorAll('[data-stuff-scope]'))tab.setAttribute('aria-selected',String(tab===button));
+    renderEvents();
+  };
+  button.onkeydown=event=>{
+    const tabs=[...document.querySelectorAll('[data-stuff-scope]')],index=tabs.indexOf(button);
+    const next=event.key==='ArrowRight'?(index+1)%tabs.length:event.key==='ArrowLeft'?(index+tabs.length-1)%tabs.length:event.key==='Home'?0:event.key==='End'?tabs.length-1:null;
+    if(next===null)return;event.preventDefault();tabs[next].focus();tabs[next].click();
+  };
+}
 for (const b of document.querySelectorAll('[data-tab]')) b.onclick = async () => { notice('');if(b.dataset.tab==='events' && $('stuff-menu')?.showPopover)return;if(b.dataset.tab==='create')requestCreation();else go(b.dataset.tab); };
 for(const [id,type] of [['stuff-events','events'],['stuff-media','media']])$(id).onclick=()=>{if(formSaving){notice('Your changes are still saving. Please wait.');return;}$('stuff-type').value=type;go('events');};
 $('home-brand').onclick=event=>{event.preventDefault();go('home');};

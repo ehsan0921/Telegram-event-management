@@ -30,6 +30,13 @@ fieldset.panel{min-width:0}fieldset legend{font-size:18px;font-weight:700;letter
 #confirm-dialog .event-actions { justify-content:flex-end; }
 .stuff-menu { position:fixed; inset:auto 12px calc(86px + env(safe-area-inset-bottom)) auto; margin:0; width:min(230px,calc(100vw - 24px)); padding:8px; border:1px solid var(--line); border-radius:16px; background:var(--panel); color:var(--text); box-shadow:0 8px 30px #16382f25; }
 .stuff-menu button { display:block; width:100%; text-align:left; background:transparent; color:var(--text); }
+.stuff-scopes { display:flex; gap:6px; margin:16px 0; }
+.stuff-scopes button { flex:1; background:transparent; color:var(--text); border:1px solid var(--line); }
+.stuff-scopes [aria-selected="true"] { background:var(--accent); color:white; }
+#stuff-leave-dialog { width:min(460px,calc(100% - 32px)); max-height:85dvh; overflow:auto; padding:22px; border:1px solid var(--line); border-radius:18px; background:var(--panel); color:var(--text); }
+#stuff-leave-dialog::backdrop { background:rgba(0,0,0,.65); }
+#stuff-leave-dialog .dialog-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+#stuff-leave-dialog .event-actions button { flex:1; }
 .stuff-menu button:hover,.stuff-menu button:focus-visible { background:var(--bg); outline:2px solid var(--accent); outline-offset:-2px; }
 .gallery-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:22px; }
 .gallery-item { overflow:hidden; border:1px solid var(--line); border-radius:16px; background:var(--panel); }

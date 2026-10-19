@@ -1,6 +1,7 @@
 import {paymentMethod,paidEvent} from './event-payment.js';
 import {qrPhoto} from './telegram-upload.js';
 import {albumMembers} from './album-members.js';
+import {leaveAlbum,removeInvitation} from './stuff.js';
 import {uploadedMedia,mediaMethods,mediaPayload} from './media-preview.js';
 import {startBroadcast,toggleBroadcast,collectBroadcast,sendBroadcast,undoBroadcast} from './guest-messages.js';
 import {invitationMode,claimInvitation,invitationSettings,invitationParticipantMode,oneTimeInvites,invitationAvailable,consumeInvitation,reconcileInvitationClaims} from './invitations.js';
@@ -87,7 +88,7 @@ export class Bot {
     }
     return this.afterIdentity(id,e,s);
   }
-  hasPending(id) { return Object.values(this.db.events).some(e => this.allowed(e,id) && !isManager(e,id) && invitationMode(e)!=='tickets' && !e.cancelled && e.guests[id]?.status === 'later'); }
+  hasPending(id) { return Object.values(this.db.events).some(e => !this.db.preferences[id]?.hiddenEvents?.[e.id] && this.allowed(e,id) && !isManager(e,id) && invitationMode(e)!=='tickets' && !e.cancelled && e.guests[id]?.status === 'later'); }
   home(id, text = 'Welcome to XEvents 🎉\nTap Create to make an event or media album, or My stuff to find yours.',immediate=false) { return this.api('sendMessage',{chat_id:id,text,reply_markup:homeKeyboard(),...(immediate?{__broadcastNotice:true}:{})}); }
   session(id, value) { if (value) this.db.sessions[id] = value; else delete this.db.sessions[id]; }
   link(e) { return `https://t.me/${this.username}?start=e_${e.id}`; }
@@ -117,6 +118,7 @@ export class Bot {
       rows.push([button('👥 Viewers & contributors',`album-members:${e.id}`)]);
       rows.push([button('🗑 Delete media album',`album-delete:${e.id}`)]);
     }
+    if(e.kind==='photos' && !isManager(e,id))rows.push([button('Leave media album',`album-leave:${e.id}`)]);
     rows.push([button(menu.home,'nav:home')]);
     if (e.banner) return this.api('sendPhoto',{chat_id:id,photo:e.banner,caption:e.title,reply_markup:keyboard(...rows)});
     return this.send(id,e.title,keyboard(...rows));
@@ -147,7 +149,7 @@ export class Bot {
     return this.send(id, `Guest options\nTap to enable extras.${invitationMode(s.draft)==='named' ? '\nCounts come from your guest list; no approval is needed.' : ''}\nReminder: ${reminderLabel(s.draft.defaultReminder || 0)}\nReply deadline: ${s.draft.responseDeadline || 'None'}`, keyboard(...paired(buttons)));
   }
   async pendingInvitations(id) {
-    const events = Object.values(this.db.events).filter(e => this.allowed(e,id) && !isManager(e,id) && invitationMode(e)!=='tickets' && !e.cancelled && e.guests[id]?.status === 'later');
+    const events = Object.values(this.db.events).filter(e => !this.db.preferences[id]?.hiddenEvents?.[e.id] && this.allowed(e,id) && !isManager(e,id) && invitationMode(e)!=='tickets' && !e.cancelled && e.guests[id]?.status === 'later');
     await this.home(id, events.length ? '⏳ Invitations you haven’t responded to yet. Tap an event to respond.' : 'You have no unanswered invitations.');
     for (const e of events) await this.send(id, `${e.title}\n${this.time(e, id)}${responsesClosed(e) ? '\nResponses closed — deadline passed' : ''}`, keyboard([button('Open invitation', `v:${e.id}`)]));
   }
@@ -288,6 +290,7 @@ export class Bot {
     }
     if (owner) extras.push(e.cancelled ? button('Delete event', `delete:${e.id}`) : button('Cancel event', `x:${e.id}`));
     rows.push(...paired(extras));
+    if(!rsvpOnly && !host)rows.push([button('Remove invitation from My stuff',`invite-leave:${e.id}`)]);
     if(!rsvpOnly)rows.push([button(menu.events, 'nav:events'), button(menu.home, 'nav:home')]);
     const visibility = can(e, id, 'guestList') ? 'Guest names and RSVP comments can be seen in the guest list.' : 'The organiser has kept the guest list private. Your response and comment are shared with the organiser.';
     const location = canSeeLocation(e, id) ? e.location || 'Location to follow' : paidEvent(e) ? requiresApproval(e) ? 'Shared after approval and confirmed payment' : 'Shared after confirmed payment' : requiresApproval(e) ? 'Shared after organiser approval' : 'Shared after acceptance';
@@ -404,7 +407,7 @@ export class Bot {
         const e=Object.values(this.db.events).find(e=>e.kind==='photos' && !e.cancelled && e.viewToken===photoMatch[1]);
         if(!e)return this.home(id,'This photo-sharing link is unavailable.');
         this.db.preferences[id] ||= {};this.db.preferences[id].mediaAccess ||= {};
-        this.db.preferences[id].mediaAccess[e.id]=photoMatch[1];
+        if(!this.mediaCan(e,id,'uploadMedia'))this.db.preferences[id].mediaAccess[e.id]=photoMatch[1];
         return this.mediaCard(id,e);
       }
       const uploadMatch = text.match(/^\/start(?:@\w+)? (u_([a-f0-9]{32})|a_([a-f0-9]{16}))$/);
@@ -427,7 +430,7 @@ export class Bot {
         return this.card(id,e);
       }
       const personal=text.match(/^\/start(?:@\w+)? i_([a-f0-9]{16})_([a-f0-9]{32})$/);
-      if(personal){const e=this.db.events[personal[1]];if(isManager(e,id))return this.card(id,e);try{claimInvitation(e,personal[2],id);}catch(error){return this.home(id,error.message);}return this.card(id,e);}
+      if(personal){const e=this.db.events[personal[1]];if(isManager(e,id))return this.card(id,e);try{claimInvitation(e,personal[2],id);}catch(error){return this.home(id,error.message);}if(this.db.preferences[id]?.hiddenEvents)delete this.db.preferences[id].hiddenEvents[e.id];return this.card(id,e);}
       const match = text.match(/^\/start(?:@\w+)? e_([a-f0-9]{16})$/);
       if (match) {
         const e = this.db.events[match[1]];
@@ -436,6 +439,7 @@ export class Bot {
         if(invitationMode(e)==='named' && !isManager(e,id) && !e.guests[id])return this.home(id,'Ask the organiser for your personal invitation link.');
         if(!isManager(e,id) && !invitationAvailable(e,id))return this.home(id,'This invitation has already been used by another guest. Ask the organiser for your own link.');
         if (!e.cancelled && !isManager(e,id) && !e.guests[id]) e.guests[id] = { name: name(m.from), status: 'later', comment: '', answers: [], phone: '' };
+        if(this.db.preferences[id]?.hiddenEvents)delete this.db.preferences[id].hiddenEvents[e.id];
         return this.card(id, e);
       }
       return this.home(id);
@@ -445,7 +449,7 @@ export class Bot {
       this.session(id);
       const all=Object.values(this.db.events);
       const albums=command==='/stuff' ? all.filter(e=>e.kind==='photos' && !e.cancelled && this.mediaAllowed(e,id)) : [];
-      const events = all.filter(e => e.kind!=='photos' && this.allowed(e, id) && !e.cancelled && (isManager(e,id) || e.guests[id]?.status !== 'no'));
+      const events = all.filter(e => e.kind!=='photos' && this.allowed(e, id) && !e.cancelled && (isManager(e,id) || !this.db.preferences[id]?.hiddenEvents?.[e.id] && e.guests[id]?.status !== 'no'));
       if (!events.length && !albums.length) return this.home(id, 'Nothing here yet. Tap Create to make an event or media album, or open an invitation.');
       if(command==='/stuff'){
         const items=[...events.map(e=>button('Event: '+e.title,`v:${e.id}`)),...albums.map(e=>button('Media album: '+e.title,`v:${e.id}`)),...events.filter(e=>e.permissions?.viewMedia===true && this.mediaCan(e,id,'viewMedia')).map(e=>button('Media album: '+e.title,`m:${e.id}:0`))];
@@ -605,6 +609,22 @@ export class Bot {
     const [action, eid, arg, version] = (q.data || '').split(':');
     const e = this.db.events[eid];
     if(q.id)await this.api('answerCallbackQuery', { callback_query_id: q.id }).catch(() => {});
+    if(['album-leave','album-leave-confirm','invite-leave','invite-hide','invite-withdraw'].includes(action)){
+      try{
+        if(action.startsWith('album-')){
+          if(e?.kind!=='photos' || isManager(e,id) || !this.mediaAllowed(e,id))return this.send(id,'Open an album you have joined first.');
+          if(action==='album-leave')return this.send(id,'Leave this media album? It will disappear from My stuff. Your uploaded files remain. You can rejoin using a valid sharing link.',keyboard([button('Leave album',`album-leave-confirm:${e.id}`),button('Keep album',`v:${e.id}`)]));
+          leaveAlbum(this.db,id,e);return this.home(id,'You left the media album. Your uploaded files were kept.');
+        }
+        if(!e || e.kind==='photos' || isManager(e,id) || !this.allowed(e,id))return this.send(id,'Open your invitation first.');
+        if(action==='invite-leave'){
+          const active=!e.cancelled && eventGroup(e)!=='Past events';
+          return this.send(id,active ? 'Remove this invitation from My stuff? You can keep your RSVP, or cancel it and notify the organiser. Paid bookings, check-ins and response deadlines still apply.' : 'Remove this past invitation from My stuff? Its RSVP and history will be kept. No notification will be sent.',keyboard([button('Remove only · keep RSVP',`invite-hide:${e.id}`)],...(active?[[button('Cancel RSVP & notify',`invite-withdraw:${e.id}:${e.guests[id]?.responseVersion || 0}`)]]:[]),[button('Keep invitation',`v:${e.id}`)]));
+        }
+        await removeInvitation(this,id,e,{notify:action==='invite-withdraw',version:Number(arg)});
+        return this.home(id,'Invitation removed from My stuff. Saved records were kept.');
+      }catch(error){return this.send(id,error.message);}
+    }
     if(action==='album-members'){
       if(e?.kind!=='photos' || e.owner!==id || e.cancelled)return this.send(id,'Only the album owner can view this access list.');
       const members=this.albumMembersFor ? await this.albumMembersFor(e) : albumMembers(e,this.db.preferences,this.db.users);
@@ -736,7 +756,7 @@ export class Bot {
       return this.chooseParticipants(id,e,session,Number(arg));
     }
     if (required && !can(e, id, required)) return this.send(id, 'The organiser has not enabled this option for guests.');
-    if (action === 'v') { this.session(id); return this.card(id, e); }
+    if (action === 'v') { this.session(id);if(this.db.preferences[id]?.hiddenEvents)delete this.db.preferences[id].hiddenEvents[e.id];return this.card(id, e); }
     if (action === 'details') return this.card(id, e, false);
     if(action==='invite-links')return this.personalLinks(id,e,arg);
     if(action==='invite-copy')return invitationCopyCard(this,id,e,arg);
