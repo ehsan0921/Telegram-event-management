@@ -1,5 +1,7 @@
 import {parseEventPayment,paymentMethod,paidEvent} from './event-payment.js';
 import {readAlbumMembers} from './album-members.js';
+import {leaveAlbum,visibleStuff,removeInvitation as removeOwnInvitation} from './stuff.js';
+import {mediaRole} from './permissions.js';
 import {guestMessageApi} from './guest-message-api.js';
 import {issueTicket,verifyTicket} from './tickets.js';
 import {profileFields,profilePreference,profilePhotoApi} from './profile.js';
@@ -83,11 +85,11 @@ function cohostSettings(input,event) {
   for(const [key,value] of Object.entries(values))if(input[key]!==undefined && input[key]!==value)throw new InputError('Only the event owner can change payment settings.');
   if(input.invitationMode!==undefined && input.invitationMode!==invitationMode(event))throw new InputError('Only the event owner can change the invitation mode.');
 }
-export function publicEvent(e, id, username) {
+export function publicEvent(e, id, username, preference={}) {
   const manager=isManager(e,id),owner=e.owner===id;
   const entries=cohostEntries(e),cohosts=entries.filter(entry=>entry.status==='active' && entry.cohost).map(entry=>entry.cohost);
   return {
-    kind:e.kind || 'event',...(e.kind==='photos' ? {showUploaders:e.showUploaders!==false} : {}),...(owner && e.kind==='photos' ? {photoLinks:photoLinks(e,username)} : {}),
+    kind:e.kind || 'event',mediaRole:e.kind==='photos' ? mediaRole(e,id,preference) : manager ? 'owner' : can(e,id,'uploadMedia') ? 'contributor' : can(e,id,'viewMedia') ? 'viewer' : null,responseVersion:e.guests[id]?.responseVersion || 0,...(e.kind==='photos' ? {showUploaders:e.showUploaders!==false} : {}),...(owner && e.kind==='photos' ? {photoLinks:photoLinks(e,username)} : {}),
     invitationMode:invitationMode(e),guestName:e.owner!==id ? e.guests[id]?.name || null : null,
     askPhone:asksPhone(e),askComments:asksComments(e),
     ...(manager ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,responded:hasRecordedResponse(g,invitationHistory(e,g.invitationToken),Number(uid)),approval:g.status==='yes' ? requiresApproval(e) ? g.approval || 'pending' : 'approved' : null,confirmed:confirmed(e,g),participants:participantCount(e,g),paymentStatus:g.payment?.status || null})),...Object.entries(e.invitees || {}).filter(([token])=>!Object.values(e.guests).some(g=>g.invitationToken===token)).map(([token,g])=>({id:null,name:g.name,status:'unopened',responded:false,participants:participantCount(e,{...g,invitationToken:token}),confirmed:false}))]} : {}),
@@ -256,15 +258,16 @@ async function miniApiForUser(request, env, user) {
   }
   if (path === '/api/bootstrap' && request.method === 'GET') {
     await rememberUser(env, user);
-    const { results } = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND (json_extract(data,'$.owner')=? OR json_extract(data,'$.cohost.id')=? OR EXISTS (SELECT 1 FROM json_each(records.data,'$.cohostLinks') AS link WHERE json_extract(link.value,'$.status')='active' AND json_extract(link.value,'$.cohost.id')=?) OR json_type(data,?) IS NOT NULL)").bind(user.id,user.id,user.id, `$.guests."${user.id}"`).all();
     const preference = await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(user.id)).first();
+    const pref=preference ? JSON.parse(preference.data) : {};
+    const joined=Object.keys(pref.mediaAccess || {}).filter(id=>/^[a-f0-9]{16}$/.test(id));
+    const { results } = await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND (json_extract(data,'$.owner')=? OR json_extract(data,'$.cohost.id')=? OR EXISTS (SELECT 1 FROM json_each(records.data,'$.cohostLinks') AS link WHERE json_extract(link.value,'$.status')='active' AND json_extract(link.value,'$.cohost.id')=?) OR json_type(data,?) IS NOT NULL OR id IN (SELECT value FROM json_each(?)))").bind(user.id,user.id,user.id, `$.guests."${user.id}"`,JSON.stringify(joined)).all();
     const session = await env.DB.prepare("SELECT data FROM records WHERE kind='sessions' AND id=?").bind(String(user.id)).first();
     const s = session ? JSON.parse(session.data) : null;
     const pickerSession = s && (s.step === 'when' || s.step === 'permissions' || (s.step === 'edit' && s.field === 'when')) ? { token: s.token, event: s.event || null, deadlineDate: s.draft?.deadlineDate || '', deadlineTime: s.draft?.deadlineTime || '', timezone: s.draft?.deadlineTimezone || s.draft?.timezone || null } : null;
     const pricing=await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id='_pricing'").first();
-    const pref=preference ? JSON.parse(preference.data) : {};
     const branding=await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id='_branding'").first();
-    return respond({branding:{hasIcon:!!(branding && JSON.parse(branding.data).botIcon)},pricing:await readOnlinePricing(env,pricing ? JSON.parse(pricing.data) : {}),currencyCodes,localCurrency:localCurrency(pref), user: { id: user.id, firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: profilePreference(pref), session: pickerSession, events: results.map(r=>JSON.parse(r.data)).filter(e=>isManager(e,user.id) || (e.guests[user.id] && invitationAvailable(e,user.id))).map(e=>publicEvent(e,user.id,env.BOT_USERNAME)) });
+    return respond({branding:{hasIcon:!!(branding && JSON.parse(branding.data).botIcon)},pricing:await readOnlinePricing(env,pricing ? JSON.parse(pricing.data) : {}),currencyCodes,localCurrency:localCurrency(pref), user: { id: user.id, firstName: user.first_name || 'Guest', isSuperAdmin: isSuperAdmin(user, env) }, preference: profilePreference(pref), session: pickerSession, events: results.map(r=>JSON.parse(r.data)).filter(e=>visibleStuff(e,user.id,pref)).map(e=>publicEvent(e,user.id,env.BOT_USERNAME,pref)) });
   }
   if (request.method !== 'POST') return respond({ error: 'Not found' }, 404);
   const messageMatch=path.match(/^\/api\/events\/([a-f0-9]{16})\/messages\/(start|send|upload|undo|history|delete)$/);
@@ -313,6 +316,14 @@ async function miniApiForUser(request, env, user) {
         return { preference: profilePreference(data.preferences[id]) };
       }
       const photoSettings=path.match(/^\/api\/collections\/([a-f0-9]{16})\/settings$/);
+      const leaveMatch=path.match(/^\/api\/(collections|events)\/([a-f0-9]{16})\/leave$/);
+      if(leaveMatch){
+        if(input.confirm!==true)throw new InputError('Confirm this action first.');
+        const event=data.events[leaveMatch[2]];
+        if(leaveMatch[1]==='collections')leaveAlbum(data,id,event);
+        else {if(typeof input.notify!=='boolean')throw new InputError('Choose whether to notify the organiser.');await removeOwnInvitation(bot,id,event,{notify:input.notify,version:input.version});}
+        return {saved:true};
+      }
       if(photoSettings){
         const e=data.events[photoSettings[1]];
         if(e?.kind!=='photos' || e.owner!==id || e.cancelled)throw new InputError('Only the collection owner can change this setting.');

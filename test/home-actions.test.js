@@ -45,7 +45,7 @@ function harness(events){
     if(className && !(node.className || '').split(' ').includes(className))return false;
     return !!eventId || !!className;
   };
-  const nodes=new Map(['home-upcoming','home-ongoing','event-list','zone-note','events-heading','stuff-type','stuff-type-label'].map(id=>[id,new El()]));
+  const nodes=new Map(['home-upcoming','home-ongoing','event-list','zone-note','events-heading','stuff-type','stuff-type-label','stuff-scopes'].map(id=>[id,new El()]));
   const findById=id=>nodes.get(id) || [...nodes.values()].flatMap(descendants).find(node=>node.id===id);
   const calls=[],state={events,preference:{timezone:'Australia/Sydney'}};
   let ui;
@@ -55,7 +55,7 @@ function harness(events){
     dateInZone:instant=>new Date(instant).toISOString().slice(0,10),format:e=>e.title || 'Event time',
     element:(tag,text='',className)=>Object.assign(new El(tag,text),{className}),
     action:(label,fn,className)=>Object.assign(new El('button',label),{onclick:fn,className}),
-    priceTag:()=>new El('span','Free'),priceEstimate:()=>'',appendPhotoLinks:()=>{},
+    priceTag:()=>new El('span','Free'),priceEstimate:()=>'',appendPhotoLinks:()=>{},leaveStuff:spy('leave'),
     document:{createElement:tag=>new El(tag),getElementById:findById,querySelector:selector=>[...nodes.values()].flatMap(descendants).find(node=>matches(node,selector)),querySelectorAll:selector=>[...nodes.values()].flatMap(descendants).filter(node=>matches(node,selector))},
     openTelegram:spy('chat'),editEvent:spy('edit'),openGuestList:spy('guests'),openNamedLinks:spy('invitations'),
     openCheckin:spy('checkin'),openTicket:spy('ticket'),openGallery:spy('media'),share:spy('share'),openCoHost:spy('cohosts'),showQr:spy('upload'),cancelEvent:spy('cancel'),notice:spy('notice'),
@@ -96,6 +96,15 @@ test('Media albums includes enabled event galleries and excludes disabled, cance
   assert.deepEqual(f.calls.at(-1),{kind:'media',args:[enabled.id]});
   f.nodes.get('stuff-type').value='events';f.ui.renderEvents();
   assert.ok(f.cards('event-list').some(card=>card.id==='event-card-'+enabled.id));
+});
+
+test('media All, Own and Invited tabs filter ownership and show viewer/contributor tags',()=>{
+  const own=event({kind:'photos',isOwner:true}),invited=event({id:'fedcba9876543210',kind:'photos',mediaRole:'contributor'}),f=harness([own,invited]);
+  f.nodes.get('stuff-type').value='media';f.nodes.get('stuff-scopes').dataset.scope='invited';f.ui.renderEvents();
+  assert.deepEqual(f.cards('event-list').map(card=>card.id),['event-card-'+invited.id]);
+  assert.ok(f.cards('event-list')[0].children.some(node=>node.textContent==='CONTRIBUTOR'));
+  f.nodes.get('stuff-scopes').dataset.scope='own';f.ui.renderEvents();assert.deepEqual(f.cards('event-list').map(card=>card.id),['event-card-'+own.id]);
+  f.nodes.get('stuff-scopes').dataset.scope='all';f.ui.renderEvents();assert.equal(f.cards('event-list').length,2);
 });
 
 test('Home provides app navigation shortcuts alongside event cards',()=>{
