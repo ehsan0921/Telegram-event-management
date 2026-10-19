@@ -99,6 +99,8 @@ test('album deletion is owner-only, asks first and invalidates sharing and uploa
   await f.cb(2,'album-delete:'+e.id);await f.cb(2,'album-delete-confirm:'+e.id);
   assert.equal(f.store.data.events[e.id],e);
   await f.cb(1,'v:'+e.id);
+  assert.equal(f.calls.at(-1).reply_markup.inline_keyboard.at(-1)[0].callback_data,'album-danger:'+e.id);
+  await f.cb(1,'album-danger:'+e.id);
   assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='album-delete:'+e.id));
   await f.cb(1,'album-delete:'+e.id);assert.equal(f.store.data.events[e.id],e);
   assert.match(f.calls.at(-1).text,/Permanently delete media album/);

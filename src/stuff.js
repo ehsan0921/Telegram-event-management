@@ -5,6 +5,7 @@ import {eventGroup} from './reminders.js';
 import {InputError} from './time.js';
 
 export function visibleStuff(event,id,preference={}){
+  if(event.kind==='photos' && event.sharingDisabled)return event.owner===id;
   if(isManager(event,id))return true;
   if(event.kind==='photos')return !!mediaRole(event,id,preference);
   return !preference.hiddenEvents?.[event.id] && !!event.guests[id] && invitationAvailable(event,id);

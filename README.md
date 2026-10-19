@@ -83,6 +83,14 @@ There is no built-in photo-count limit. Telegram and hosting limits apply; Mini 
 
 Album owners can choose **Delete media album** in the bot's album controls or on the Mini App's album card. A confirmation is required. Deletion removes the album and its saved media references, stops its sharing links and clears active upload sessions. It does not remove files already sent to Telegram chats. Viewers and contributors cannot delete albums; event galleries remain managed through their event's controls.
 
+Creator-only sharing and deletion controls are grouped in **Danger zone**, at the bottom of the album controls. In the Mini App this section is collapsed by default, after the sharing links, with compact action buttons. Each action asks for confirmation:
+
+- **Disable album:** keeps the album and its files private to its creator. Current viewers and contributors lose access, their upload sessions are cleared, and existing sharing links stop working.
+- **Regenerate links:** replaces both viewer and contributor links, revokes current shared access and upload sessions, and enables sharing with fresh links. Guests must join again using a new link; regenerating does not restore previous memberships.
+- **Delete media album:** permanently removes the album and its saved media references.
+
+These actions cannot recall files that someone has already downloaded or received in Telegram. Event galleries keep their event's existing management controls.
+
 Owners can also open **Viewers & contributors** in the bot or expand it on the Mini App album card. The list shows names grouped by current access: people who opened a viewer link or a contributor link. Receiving a link alone does not add someone to the list, and contributor access does not mean a person has uploaded a file. Invalidated grants are excluded. Only the owner can see this list; it does not reveal phone numbers, access tokens or other account details.
 
 Opening a valid album viewer or contributor link automatically joins that album and saves it in **My stuff** for later visits. Opening a viewer link does not downgrade existing contributor access. Under **My stuff → Media albums**, use **All**, **Own** and **Invited** to filter the list; cards show **Owner**, **Co-host**, **Viewer** or **Contributor** tags as applicable. Access remains subject to the album's current permissions and valid sharing tokens.

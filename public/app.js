@@ -10,6 +10,20 @@ const compactPicker = picker || deadlinePicker;
 const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 let state = { events: [], preference: {} }, activeEvent = null, createdEvent = null, previewSequence = 0;
 let requestId = crypto.randomUUID();
+const albumAccessBusy=new Set();
+async function updateAlbumAccess(event,operation){
+  if(!event.isOwner || albumAccessBusy.has(event.id))return;
+  albumAccessBusy.add(event.id);
+  try{
+    const message=operation==='disable'?'Disable shared access to this album? All viewers and contributors will lose access. Old links and their upload sessions will stop working. Only you will retain access. Files are kept.':'Create new viewer and contributor links? Old links and current viewer/contributor access will stop working, including upload sessions. Sharing will be enabled with new links; people must join again. Files are kept.';
+    if(!await confirmAction(message,'album-'+operation))return;
+    const result=await api(`collections/${event.id}/access`,{action:operation,confirm:true,version:event.albumAccessVersion || 0});
+    Object.assign(event,result.event);const index=state.events.findIndex(item=>item.id===event.id);if(index>=0)state.events[index]=result.event;else state.events.push(result.event);
+    $('photo-links').hidden=true;$('stuff-type').value='media';go('events');
+    notice(operation==='disable'?'Album is private to you. All shared access has been revoked.':'New links are ready. Old links and shared access have been revoked.');
+    try{await refresh();}catch(error){notice('Sharing updated. Could not refresh: '+error.message);}
+  }finally{albumAccessBusy.delete(event.id);}
+}
 let stuffLeaving=false;
 function leaveStuff(event){
   if(isManager(event) || stuffLeaving || formSaving)return;
@@ -134,6 +148,7 @@ function format(e, zone = selectedZone()) {
 }
 function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener'); }
 function appendPhotoLinks(node,event){
+  if(event.sharingDisabled)node.append(element('p','PRIVATE · CREATOR ONLY','tag'));
   if(event.isOwner){
     const label=element('label','','check-option'),input=element('input');input.type='checkbox';input.checked=event.showUploaders!==false;
     input.onchange=async()=>{
@@ -153,13 +168,22 @@ function appendPhotoLinks(node,event){
         for(const role of ['viewer','contributor']){const people=members.filter(person=>person.role===role);list.append(element('h4',`${role==='viewer'?'Viewers':'Contributors'} (${people.length})`));for(const person of people)list.append(element('p',person.name,'small'));if(!people.length)list.append(element('p','None yet','small muted'));}
       }catch(error){if(access.isConnected){const message=element('p',error.message,'error');message.setAttribute('role','alert');list.replaceChildren(message);}}
     };
-    node.append(action('🗑 Delete media album',()=>deleteEvent(event),'danger-button'));
   }
   for(const [role,link] of Object.entries(event.photoLinks || {})){
     node.append(action('Share '+role+' link',()=>openTelegram('https://t.me/share/url?url='+encodeURIComponent(link))));
     const label=element('label',role==='viewer'?'Viewer — browse only':'Contributor — browse and add media');
     const input=element('input');input.value=link;input.readOnly=true;input.setAttribute('aria-label',role+' link');input.onclick=()=>input.select();
     label.append(input);node.append(label);
+  }
+  if(event.isOwner){
+    const danger=element('details','','album-danger');danger.append(element('summary','Danger zone'));
+    danger.append(element('p','Sharing changes revoke all current viewer and contributor access. Previously downloaded or sent copies cannot be recalled.','small muted'));
+    const row=(title,description,label,fn)=>{const section=element('div','','album-danger-row'),copy=element('div');copy.append(element('strong',title),element('p',description,'small muted'));section.append(copy,action(label,fn,'album-danger-action'));danger.append(section);};
+    if(!event.sharingDisabled)row('Disable album','Keep this album and its files private to you.','Disable album',()=>updateAlbumAccess(event,'disable'));
+    else danger.append(element('p','Sharing is disabled. Only you can access this album.','small muted'));
+    row('Regenerate sharing links','Invalidate old links and access. New links enable sharing again.','Regenerate links',()=>updateAlbumAccess(event,'regenerate'));
+    row('Delete album','Permanently delete this album and its saved media references.','Delete media album',()=>deleteEvent(event));
+    node.append(danger);
   }
 }
 function setupPhotoCreation(){
@@ -334,7 +358,7 @@ let confirmationSession=null;
 function confirmAction(message, operation) {
   const dialog = $('confirm-dialog');
   if (dialog.open || confirmationSession) return Promise.resolve(false);
-  const labels={delete:['Delete event?','Delete event','Keep event'],cancel:['Cancel event?','Cancel event','Keep event'],'cohost-revoke':['Revoke co-host access?','Revoke access','Keep access'],'cohost-cancel-link':['Cancel co-host invite?','Cancel invite link','Keep link'],'cohost-rotate':['Replace co-host invite?','Create new link','Keep current link'],'whitelist-enable':['Restrict dev access?','Turn on whitelist','Keep current access'],'whitelist-first':['Restrict dev access?','Add user and restrict','Back'],'whitelist-disable':['Open dev access?','Turn off whitelist','Keep restricted'],'whitelist-last':['Remove the last user?','Remove user','Keep user'],'whitelist-repair':['Repair access setting?','Repair and turn on','Back']}[operation] || ['Confirm action','Confirm','Back'];
+  const labels={'album-disable':['Disable album sharing?','Disable album','Keep sharing'],'album-regenerate':['Regenerate sharing links?','Generate new links','Keep current links'],delete:['Delete event?','Delete event','Keep event'],cancel:['Cancel event?','Cancel event','Keep event'],'cohost-revoke':['Revoke co-host access?','Revoke access','Keep access'],'cohost-cancel-link':['Cancel co-host invite?','Cancel invite link','Keep link'],'cohost-rotate':['Replace co-host invite?','Create new link','Keep current link'],'whitelist-enable':['Restrict dev access?','Turn on whitelist','Keep current access'],'whitelist-first':['Restrict dev access?','Add user and restrict','Back'],'whitelist-disable':['Open dev access?','Turn off whitelist','Keep restricted'],'whitelist-last':['Remove the last user?','Remove user','Keep user'],'whitelist-repair':['Repair access setting?','Repair and turn on','Back']}[operation] || ['Confirm action','Confirm','Back'];
   $('confirm-title').textContent = labels[0];
   $('confirm-message').textContent = message;
   $('confirm-proceed').textContent = labels[1];$('confirm-back').textContent=labels[2];

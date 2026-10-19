@@ -1,5 +1,6 @@
 import {parseEventPayment,paymentMethod,paidEvent} from './event-payment.js';
 import {readAlbumMembers} from './album-members.js';
+import {changeAlbumAccess} from './album-access.js';
 import {leaveAlbum,visibleStuff,removeInvitation as removeOwnInvitation} from './stuff.js';
 import {mediaRole} from './permissions.js';
 import {guestMessageApi} from './guest-message-api.js';
@@ -89,7 +90,7 @@ export function publicEvent(e, id, username, preference={}) {
   const manager=isManager(e,id),owner=e.owner===id;
   const entries=cohostEntries(e),cohosts=entries.filter(entry=>entry.status==='active' && entry.cohost).map(entry=>entry.cohost);
   return {
-    kind:e.kind || 'event',mediaRole:e.kind==='photos' ? mediaRole(e,id,preference) : manager ? 'owner' : can(e,id,'uploadMedia') ? 'contributor' : can(e,id,'viewMedia') ? 'viewer' : null,responseVersion:e.guests[id]?.responseVersion || 0,...(e.kind==='photos' ? {showUploaders:e.showUploaders!==false} : {}),...(owner && e.kind==='photos' ? {photoLinks:photoLinks(e,username)} : {}),
+    kind:e.kind || 'event',mediaRole:e.kind==='photos' ? mediaRole(e,id,preference) : manager ? 'owner' : can(e,id,'uploadMedia') ? 'contributor' : can(e,id,'viewMedia') ? 'viewer' : null,responseVersion:e.guests[id]?.responseVersion || 0,...(e.kind==='photos' ? {showUploaders:e.showUploaders!==false,sharingDisabled:e.sharingDisabled===true,albumAccessVersion:e.albumAccessVersion || 0} : {}),...(owner && e.kind==='photos' ? {photoLinks:photoLinks(e,username)} : {}),
     invitationMode:invitationMode(e),guestName:e.owner!==id ? e.guests[id]?.name || null : null,
     askPhone:asksPhone(e),askComments:asksComments(e),
     ...(manager ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,responded:hasRecordedResponse(g,invitationHistory(e,g.invitationToken),Number(uid)),approval:g.status==='yes' ? requiresApproval(e) ? g.approval || 'pending' : 'approved' : null,confirmed:confirmed(e,g),participants:participantCount(e,g),paymentStatus:g.payment?.status || null})),...Object.entries(e.invitees || {}).filter(([token])=>!Object.values(e.guests).some(g=>g.invitationToken===token)).map(([token,g])=>({id:null,name:g.name,status:'unopened',responded:false,participants:participantCount(e,{...g,invitationToken:token}),confirmed:false}))]} : {}),
@@ -146,6 +147,12 @@ async function miniApiForUser(request, env, user) {
   const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
   const respond = (data, status = 200) => Response.json(data, { status, headers });
   const path = new URL(request.url).pathname;
+  const albumScope=path.match(/^\/api\/(?:events|collections)\/([a-f0-9]{16})(?:\/|$)/);
+  if(albumScope){
+    const row=await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(albumScope[1]).first();
+    const album=row && JSON.parse(row.data);
+    if(album?.kind==='photos' && album.sharingDisabled && album.owner!==user.id)return respond({error:'This album is private to its creator.'},403);
+  }
   const profileResponse=await profilePhotoApi(request,env,user);if(profileResponse)return profileResponse;
   const eventMatch=path.match(/^\/api\/events\/([a-f0-9]{16})$/);
   const albumMembersMatch=path.match(/^\/api\/collections\/([a-f0-9]{16})\/members$/);
@@ -249,6 +256,7 @@ async function miniApiForUser(request, env, user) {
       if (!result.ok || !fileId) return respond({ error: 'Telegram could not save that photo. Try a different image.' }, 400);
       const value = await mutateState(env, (data) => {
         const current = data.events[event.id];
+        if(current?.kind==='photos' && current.sharingDisabled && current.owner!==user.id)throw new InputError('This album is private to its creator.');
         if (!isManager(current,user.id) || current.cancelled) throw new InputError('This event is no longer available for changes.');
         current.banner = fileId;
         return { event: publicEvent(current, user.id, env.BOT_USERNAME) };
@@ -281,6 +289,8 @@ async function miniApiForUser(request, env, user) {
     if (path === '/api/preview') return respond(schedule(input));
     const value = await mutateState(env, async (data, bot) => {
       const id = user.id;
+      const scopedAlbum=albumScope && data.events[albumScope[1]];
+      if(scopedAlbum?.kind==='photos' && scopedAlbum.sharingDisabled && scopedAlbum.owner!==id)throw new InputError('This album is private to its creator.');
       const invitationMatch=path.match(/^\/api\/events\/([a-f0-9]{16})\/invitations\/(add|remove|edit|response|revoke|delete)$/);
       if(invitationMatch){
         const e=data.events[invitationMatch[1]],action=invitationMatch[2];
@@ -316,6 +326,8 @@ async function miniApiForUser(request, env, user) {
         return { preference: profilePreference(data.preferences[id]) };
       }
       const photoSettings=path.match(/^\/api\/collections\/([a-f0-9]{16})\/settings$/);
+      const albumAccessMatch=path.match(/^\/api\/collections\/([a-f0-9]{16})\/access$/);
+      if(albumAccessMatch){const album=changeAlbumAccess(data,id,data.events[albumAccessMatch[1]],input);return {event:publicEvent(album,id,env.BOT_USERNAME)};}
       const leaveMatch=path.match(/^\/api\/(collections|events)\/([a-f0-9]{16})\/leave$/);
       if(leaveMatch){
         if(input.confirm!==true)throw new InputError('Confirm this action first.');
