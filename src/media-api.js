@@ -29,6 +29,7 @@ export async function mediaApi(request, env, user) {
   if (!mediaCan(e, user.id, 'viewMedia',pref)) return json({ error: 'The organiser has not enabled the gallery for guests.' }, 403);
   const galleryUrl=e.kind==='photos' ? photoLinks(e,env.BOT_USERNAME)?.viewer : `https://t.me/${env.BOT_USERNAME}?startapp=gallery_${e.id}`;
   if(match[2]==='gallery-qr' && request.method==='GET'){
+    if(!galleryUrl)return json({error:'Album sharing is disabled.'},400);
     if(e.qrEnabled===false)return json({error:'QR codes are disabled for this event.'},400);
     const qr=qrcode(0,'M');qr.addData(galleryUrl);qr.make();
     return json({link:galleryUrl,image:qr.createDataURL(6,24)});

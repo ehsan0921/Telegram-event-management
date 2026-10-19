@@ -1,5 +1,6 @@
 import {parseEventPayment,paymentMethod,paidEvent} from './event-payment.js';
 import {readAlbumMembers} from './album-members.js';
+import {changeAlbumAccess} from './album-access.js';
 import {leaveAlbum,visibleStuff,removeInvitation as removeOwnInvitation} from './stuff.js';
 import {mediaRole} from './permissions.js';
 import {guestMessageApi} from './guest-message-api.js';
@@ -89,7 +90,7 @@ export function publicEvent(e, id, username, preference={}) {
   const manager=isManager(e,id),owner=e.owner===id;
   const entries=cohostEntries(e),cohosts=entries.filter(entry=>entry.status==='active' && entry.cohost).map(entry=>entry.cohost);
   return {
-    kind:e.kind || 'event',mediaRole:e.kind==='photos' ? mediaRole(e,id,preference) : manager ? 'owner' : can(e,id,'uploadMedia') ? 'contributor' : can(e,id,'viewMedia') ? 'viewer' : null,responseVersion:e.guests[id]?.responseVersion || 0,...(e.kind==='photos' ? {showUploaders:e.showUploaders!==false} : {}),...(owner && e.kind==='photos' ? {photoLinks:photoLinks(e,username)} : {}),
+    kind:e.kind || 'event',mediaRole:e.kind==='photos' ? mediaRole(e,id,preference) : manager ? 'owner' : can(e,id,'uploadMedia') ? 'contributor' : can(e,id,'viewMedia') ? 'viewer' : null,responseVersion:e.guests[id]?.responseVersion || 0,...(e.kind==='photos' ? {showUploaders:e.showUploaders!==false,sharingDisabled:e.sharingDisabled===true,albumAccessVersion:e.albumAccessVersion || 0} : {}),...(owner && e.kind==='photos' ? {photoLinks:photoLinks(e,username)} : {}),
     invitationMode:invitationMode(e),guestName:e.owner!==id ? e.guests[id]?.name || null : null,
     askPhone:asksPhone(e),askComments:asksComments(e),
     ...(manager ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,responded:hasRecordedResponse(g,invitationHistory(e,g.invitationToken),Number(uid)),approval:g.status==='yes' ? requiresApproval(e) ? g.approval || 'pending' : 'approved' : null,confirmed:confirmed(e,g),participants:participantCount(e,g),paymentStatus:g.payment?.status || null})),...Object.entries(e.invitees || {}).filter(([token])=>!Object.values(e.guests).some(g=>g.invitationToken===token)).map(([token,g])=>({id:null,name:g.name,status:'unopened',responded:false,participants:participantCount(e,{...g,invitationToken:token}),confirmed:false}))]} : {}),
@@ -157,6 +158,7 @@ async function miniApiForUser(request, env, user) {
   }
   if(eventMatch && request.method==='GET'){
     const row=await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(eventMatch[1]).first();const e=row && JSON.parse(row.data);
+    if(e?.kind==='photos' && e.sharingDisabled && e.owner!==user.id)return respond({error:'This album is private to its creator.'},403);
     if(!e || (!isManager(e,user.id) && (!e.guests[user.id] || !invitationAvailable(e,user.id))))return respond({error:'Open a valid invitation first.'},403);
     return respond({event:publicEvent(e,user.id,env.BOT_USERNAME)});
   }
@@ -316,6 +318,8 @@ async function miniApiForUser(request, env, user) {
         return { preference: profilePreference(data.preferences[id]) };
       }
       const photoSettings=path.match(/^\/api\/collections\/([a-f0-9]{16})\/settings$/);
+      const albumAccessMatch=path.match(/^\/api\/collections\/([a-f0-9]{16})\/access$/);
+      if(albumAccessMatch){const album=changeAlbumAccess(data,id,data.events[albumAccessMatch[1]],input);return {event:publicEvent(album,id,env.BOT_USERNAME)};}
       const leaveMatch=path.match(/^\/api\/(collections|events)\/([a-f0-9]{16})\/leave$/);
       if(leaveMatch){
         if(input.confirm!==true)throw new InputError('Confirm this action first.');

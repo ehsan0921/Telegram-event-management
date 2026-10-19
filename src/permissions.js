@@ -7,6 +7,7 @@ export function photoCollection(title,owner,showUploaders=true) {
 export const showsUploaders=e=>e.kind!=='photos' || e.showUploaders!==false;
 export function mediaRole(e,id,preference={}) {
   if(!e || e.cancelled)return null;
+  if(e.kind==='photos' && e.sharingDisabled)return e.owner===id?'owner':null;
   if(isManager(e,id))return 'owner';
   const token=preference.mediaAccess?.[e.id];
   if(token && token===e.viewToken && e.kind==='photos')return 'viewer';
@@ -18,7 +19,7 @@ export function mediaCan(e,id,key,preference={}) {
   if(e?.kind==='photos')return ['viewMedia','uploadMedia'].includes(key) && (role==='owner' || role==='contributor' || role==='viewer' && key==='viewMedia');
   return can(e,id,key);
 }
-export const photoLinks=(e,username)=>e.kind==='photos' && !e.cancelled ? {viewer:`https://t.me/${username}?start=p_${e.viewToken}`,contributor:uploadLink(e,username)} : null;
+export const photoLinks=(e,username)=>e.kind==='photos' && !e.cancelled && !e.sharingDisabled ? {viewer:`https://t.me/${username}?start=p_${e.viewToken}`,contributor:uploadLink(e,username)} : null;
 
 export const permissionLabels = { guestList: 'See other guests', uploadMedia: 'Send photos, videos & files', viewMedia: 'See shared media' };
 export const asksPhone=e=>e.askPhone === true;
@@ -30,8 +31,8 @@ export function permissions(event) {
   return Object.fromEntries(Object.keys(permissionLabels).map(key => [key, event.permissions?.[key] === true]));
 }
 export function can(event, userId, key) { return isManager(event,userId) || permissions(event)[key]; }
-export const uploadLink = (e, username) => e.allowLinkUploads && permissions(e).uploadMedia && e.uploadToken && !e.cancelled ? `https://t.me/${username}?start=u_${e.uploadToken}` : null;
-export const shareUploadLink = (e, username) => !e.cancelled && permissions(e).uploadMedia ? uploadLink(e, username) || `https://t.me/${username}?start=a_${e.id}` : null;
+export const uploadLink = (e, username) => !(e.kind==='photos' && e.sharingDisabled) && e.allowLinkUploads && permissions(e).uploadMedia && e.uploadToken && !e.cancelled ? `https://t.me/${username}?start=u_${e.uploadToken}` : null;
+export const shareUploadLink = (e, username) => !(e.kind==='photos' && e.sharingDisabled) && !e.cancelled && permissions(e).uploadMedia ? uploadLink(e, username) || `https://t.me/${username}?start=a_${e.id}` : null;
 export function guests(event) { return Object.entries(event.guests).filter(([id]) => Number(id) !== event.owner).map(([, guest]) => guest); }
 export function confirmed(event, guest) { return guest?.status === 'yes' && (!requiresApproval(event) || guest.approval === 'approved') && (!paidEvent(event) || guest.payment?.status === 'paid'); }
 export function canSeeLocation(event, userId) { return isManager(event,userId) || (!(hidesLocation(event) || requiresApproval(event) || paidEvent(event)) || confirmed(event, event.guests[userId])); }

@@ -1,6 +1,7 @@
 import {paymentMethod,paidEvent} from './event-payment.js';
 import {qrPhoto} from './telegram-upload.js';
 import {albumMembers} from './album-members.js';
+import {changeAlbumAccess} from './album-access.js';
 import {leaveAlbum,removeInvitation} from './stuff.js';
 import {uploadedMedia,mediaMethods,mediaPayload} from './media-preview.js';
 import {startBroadcast,toggleBroadcast,collectBroadcast,sendBroadcast,undoBroadcast} from './guest-messages.js';
@@ -113,13 +114,14 @@ export class Bot {
     if (!this.appUrl && this.mediaCan(e,id,'viewMedia')) rows.push([button('🗂 Shared media',`m:${e.id}:0`)]);
     if(e.kind==='photos' && e.owner===id){
       const links=photoLinks(e,this.username);
-      rows.push([{text:'Copy viewer link',copy_text:{text:links.viewer}}],[{text:'Copy contributor link',copy_text:{text:links.contributor}}]);
+      if(links?.viewer)rows.push([{text:'Copy viewer link',copy_text:{text:links.viewer}}]);
+      if(links?.contributor)rows.push([{text:'Copy contributor link',copy_text:{text:links.contributor}}]);
       rows.push([button(showsUploaders(e)?'Uploader names: shown · Hide':'Uploader names: hidden · Show',`photo-names:${e.id}`)]);
       rows.push([button('👥 Viewers & contributors',`album-members:${e.id}`)]);
-      rows.push([button('🗑 Delete media album',`album-delete:${e.id}`)]);
     }
     if(e.kind==='photos' && !isManager(e,id))rows.push([button('Leave media album',`album-leave:${e.id}`)]);
     rows.push([button(menu.home,'nav:home')]);
+    if(e.kind==='photos' && e.owner===id)rows.push([button('Danger zone',`album-danger:${e.id}`)]);
     if (e.banner) return this.api('sendPhoto',{chat_id:id,photo:e.banner,caption:e.title,reply_markup:keyboard(...rows)});
     return this.send(id,e.title,keyboard(...rows));
   }
@@ -404,7 +406,7 @@ export class Bot {
       this.session(id);
       const photoMatch=text.match(/^\/start(?:@\w+)? p_([a-f0-9]{32})$/);
       if(photoMatch){
-        const e=Object.values(this.db.events).find(e=>e.kind==='photos' && !e.cancelled && e.viewToken===photoMatch[1]);
+        const e=Object.values(this.db.events).find(e=>e.kind==='photos' && !e.cancelled && !e.sharingDisabled && e.viewToken===photoMatch[1]);
         if(!e)return this.home(id,'This photo-sharing link is unavailable.');
         this.db.preferences[id] ||= {};this.db.preferences[id].mediaAccess ||= {};
         if(!this.mediaCan(e,id,'uploadMedia'))this.db.preferences[id].mediaAccess[e.id]=photoMatch[1];
@@ -609,6 +611,15 @@ export class Bot {
     const [action, eid, arg, version] = (q.data || '').split(':');
     const e = this.db.events[eid];
     if(q.id)await this.api('answerCallbackQuery', { callback_query_id: q.id }).catch(() => {});
+    if(['album-danger','album-disable','album-regenerate','album-access-confirm'].includes(action)){
+      if(e?.kind!=='photos' || e.owner!==id || e.cancelled)return this.send(id,'Only the creator can change album sharing.');
+      if(action==='album-danger')return this.send(id,`Danger zone · ${e.title}\n${e.sharingDisabled?'Private to you. Regenerating links enables sharing again.':'Sharing changes revoke all current viewer and contributor access.'}\nPreviously downloaded or sent copies cannot be recalled.`,keyboard(...(!e.sharingDisabled?[[button('Disable album',`album-disable:${e.id}`)]]:[]),[button('Regenerate sharing links',`album-regenerate:${e.id}`)],[button('Delete media album',`album-delete:${e.id}`)],[button('Back to album',`v:${e.id}`)]));
+      if(action!=='album-access-confirm'){
+        const operation=action==='album-disable'?'disable':'regenerate';
+        return this.send(id,operation==='disable'?'Disable shared access? All current viewers and contributors will lose access, and old links and their upload sessions will stop working. Only you will retain access. Uploaded files are kept.':'Regenerate both sharing links? Old links, current viewer/contributor access and their upload sessions will stop working. Sharing will be enabled with new links; people must join again.',keyboard([button('Confirm',`album-access-confirm:${e.id}:${operation}:${e.albumAccessVersion || 0}`),button('Keep current access',`v:${e.id}`)]));
+      }
+      try{changeAlbumAccess(this.db,id,e,{action:arg,confirm:true,version:Number(version)});await this.send(id,arg==='disable'?'Album disabled. Only you can access it.':'New sharing links created. Old links and access are revoked.');return this.mediaCard(id,e);}catch(error){return this.send(id,error.message);}
+    }
     if(['album-leave','album-leave-confirm','invite-leave','invite-hide','invite-withdraw'].includes(action)){
       try{
         if(action.startsWith('album-')){
