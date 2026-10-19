@@ -425,6 +425,7 @@ export class Bot {
       const cohost=text.match(/^\/start(?:@\w+)? c_([a-f0-9]{16})_([a-f0-9]{32})$/);
       if(cohost){
         const e=this.db.events[cohost[1]];let identity;
+        if(e?.kind==='photos' && e.sharingDisabled && e.owner!==id)return this.home(id,'This album is private to its creator.');
         try{identity=claimCohost(e,cohost[2],m.from);}catch(error){return this.home(id,error.message);}
         await this.home(id,`You are now co-host of ${e.title}. Open My events to manage it.`);
         const entry=cohostEntries(e).find(item=>item.status==='active' && item.cohost?.id===identity.id);

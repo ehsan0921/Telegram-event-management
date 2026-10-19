@@ -477,6 +477,9 @@ try {
   const privateAlbum=await api(`collections/${albumId}/access`,{action:'disable',confirm:true,version:0});
   assert.equal(privateAlbum.status,200);assert.equal(privateAlbum.data.event.sharingDisabled,true);assert.equal(privateAlbum.data.event.photoLinks,null);
   assert.equal((await api(`events/${albumId}/gallery`,null,456)).status,403);assert.equal((await api(`events/${albumId}/gallery`,null,789)).status,403);
+  assert.equal((await api(`events/${albumId}`,null,456)).status,403);
+  assert.equal((await api(`events/${albumId}/banner`,null,456)).status,403);
+  assert.equal((await api(`collections/${albumId}/settings`,{showUploaders:true},456)).status,403,'Private mode protects non-media album APIs too.');
   assert.equal((await api(`events/${albumId}/gallery`)).status,200,'The creator retains their private gallery.');
   assert.equal((await api(`events/${albumId}/upload-qr`)).status,400);
   assert.ok(!(await api('bootstrap',null,456)).data.events.some(e=>e.id===albumId));

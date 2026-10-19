@@ -147,6 +147,12 @@ async function miniApiForUser(request, env, user) {
   const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
   const respond = (data, status = 200) => Response.json(data, { status, headers });
   const path = new URL(request.url).pathname;
+  const albumScope=path.match(/^\/api\/(?:events|collections)\/([a-f0-9]{16})(?:\/|$)/);
+  if(albumScope){
+    const row=await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(albumScope[1]).first();
+    const album=row && JSON.parse(row.data);
+    if(album?.kind==='photos' && album.sharingDisabled && album.owner!==user.id)return respond({error:'This album is private to its creator.'},403);
+  }
   const profileResponse=await profilePhotoApi(request,env,user);if(profileResponse)return profileResponse;
   const eventMatch=path.match(/^\/api\/events\/([a-f0-9]{16})$/);
   const albumMembersMatch=path.match(/^\/api\/collections\/([a-f0-9]{16})\/members$/);
@@ -158,7 +164,6 @@ async function miniApiForUser(request, env, user) {
   }
   if(eventMatch && request.method==='GET'){
     const row=await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(eventMatch[1]).first();const e=row && JSON.parse(row.data);
-    if(e?.kind==='photos' && e.sharingDisabled && e.owner!==user.id)return respond({error:'This album is private to its creator.'},403);
     if(!e || (!isManager(e,user.id) && (!e.guests[user.id] || !invitationAvailable(e,user.id))))return respond({error:'Open a valid invitation first.'},403);
     return respond({event:publicEvent(e,user.id,env.BOT_USERNAME)});
   }
@@ -251,6 +256,7 @@ async function miniApiForUser(request, env, user) {
       if (!result.ok || !fileId) return respond({ error: 'Telegram could not save that photo. Try a different image.' }, 400);
       const value = await mutateState(env, (data) => {
         const current = data.events[event.id];
+        if(current?.kind==='photos' && current.sharingDisabled && current.owner!==user.id)throw new InputError('This album is private to its creator.');
         if (!isManager(current,user.id) || current.cancelled) throw new InputError('This event is no longer available for changes.');
         current.banner = fileId;
         return { event: publicEvent(current, user.id, env.BOT_USERNAME) };
@@ -283,6 +289,8 @@ async function miniApiForUser(request, env, user) {
     if (path === '/api/preview') return respond(schedule(input));
     const value = await mutateState(env, async (data, bot) => {
       const id = user.id;
+      const scopedAlbum=albumScope && data.events[albumScope[1]];
+      if(scopedAlbum?.kind==='photos' && scopedAlbum.sharingDisabled && scopedAlbum.owner!==id)throw new InputError('This album is private to its creator.');
       const invitationMatch=path.match(/^\/api\/events\/([a-f0-9]{16})\/invitations\/(add|remove|edit|response|revoke|delete)$/);
       if(invitationMatch){
         const e=data.events[invitationMatch[1]],action=invitationMatch[2];
