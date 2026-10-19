@@ -68,6 +68,8 @@ Pressing **My stuff** in the bot first shows buttons such as **Event: Community 
 
 ### Shared media albums
 
+In the Mini App, **My stuff → Media albums** shows a compact grid with album names, creation/update dates and access roles. Tap an album to open its files and settings on a separate page. Sharing, member lists, leaving an album and the owner's Danger zone appear on that album page.
+
 **My stuff → Media albums** includes standalone albums and galleries from your accessible events when media viewing is enabled, even before any files have been uploaded. Events with media viewing turned off do not appear in this list. Event galleries keep their existing access and upload permissions.
 
 Create an album without an event date, guest list, tickets or RSVPs. In chat, choose **Create → Media album** and enter a name. In the Mini App, choose **Create**, then the media option. Share the resulting links:
