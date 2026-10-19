@@ -490,7 +490,12 @@ function renderEvents() {
     if (listFilter === 'all' && group !== lastGroup) { list.append(element('h2', group, 'event-group')); lastGroup = group; }
     const card = element('article', '', 'event-card');card.id='event-card-'+e.id;card.tabIndex=-1;
     if(media){
-      card.append(element('span',e.kind==='photos'?'MEDIA ALBUM':'EVENT GALLERY','tag'),element('h3',e.title),action('Open album',()=>openGallery(e.id)));
+      card.append(element('span',e.kind==='photos'?'MEDIA ALBUM':'EVENT GALLERY','tag'),element('h3',e.title));
+      for(const [label,value] of [['Created',e.createdAt],['Last updated',e.mediaUpdatedAt]]){
+        const date=value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit',timeZone:selectedZone()}).format(new Date(value)) : 'Not recorded';
+        card.append(element('p',label+': '+date,'small muted'));
+      }
+      card.append(action('Open album',()=>openGallery(e.id)));
       card.append(element('span',e.isOwner?'OWNER':e.isCoHost?'CO-HOST':e.mediaRole==='contributor'?'CONTRIBUTOR':'VIEWER','tag'));
       if(e.kind==='photos')appendPhotoLinks(card,e);
       if(!isManager(e))card.append(action(e.kind==='photos'?'Leave media album':'Remove invitation',()=>leaveStuff(e),'danger-button'));

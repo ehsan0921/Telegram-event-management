@@ -1,6 +1,7 @@
 import {parseEventPayment,paymentMethod,paidEvent} from './event-payment.js';
 import {readAlbumMembers} from './album-members.js';
 import {changeAlbumAccess} from './album-access.js';
+import {mediaDates} from './media-preview.js';
 import {leaveAlbum,visibleStuff,removeInvitation as removeOwnInvitation} from './stuff.js';
 import {mediaRole} from './permissions.js';
 import {guestMessageApi} from './guest-message-api.js';
@@ -98,6 +99,7 @@ export function publicEvent(e, id, username, preference={}) {
     ...(manager ? {initialGuestNames:initialGuestNames(e),invitees:managedInvitations(e,username),revokedInvitees:revokedInvitations(e,username),invitationsVersion:invitationsVersion(e),cohosts,cohost:cohosts[0] || null} : {}),
     ...(owner ? {cohostLinks:entries.map(entry=>({id:entry.id,label:entry.label,status:entry.status,createdAt:entry.createdAt,cohost:entry.cohost,url:cohostLink(e,username,entry.id),...(entry.revokedAt ? {revokedAt:entry.revokedAt}:{})})),cohostInviteUrl:cohostLink(e,username),cohostVersion:cohostVersion(e)} : {}),
     id: e.id, title: e.title, when: e.when, location: canSeeLocation(e, id) ? e.location : null, description: e.description,
+    ...mediaDates(e),
     startsAt: e.startsAt, timezone: e.timezone, localDate: e.localDate, localTime: e.localTime,
     endsAt: e.endsAt || null, durationMinutes: e.durationMinutes || null, endMode: e.endMode || 'none', endDate: e.endDate || '', endTime: e.endTime || '',
     isOwner: owner, isManager:manager,isCoHost:!owner && manager,cancelled: e.cancelled, inviteUrl: `https://t.me/${username}?start=e_${e.id}`,
@@ -341,6 +343,7 @@ async function miniApiForUser(request, env, user) {
         if(e?.kind!=='photos' || e.owner!==id || e.cancelled)throw new InputError('Only the collection owner can change this setting.');
         if(typeof input.showUploaders!=='boolean')throw new InputError('Choose whether to show uploader names.');
         e.showUploaders=input.showUploaders;
+        e.mediaUpdatedAt=new Date().toISOString();
         return {event:publicEvent(e,id,env.BOT_USERNAME)};
       }
       if (path === '/api/events' || path === '/api/collections') {

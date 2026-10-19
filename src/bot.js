@@ -510,6 +510,7 @@ export class Bot {
       const media = uploadedMedia(m);
       if (!media) return this.prompt(id, 'Send a photo, video, or file. Tap Finish uploads when finished.');
       e.media.push({ id: randomBytes(6).toString('hex'), type: media.type, fileId: media.file.file_id, mimeType:media.file.mime_type || null,thumbnail:media.file.thumbnail?.file_id || media.file.thumb?.file_id || null,size: media.file.file_size || null, filename: media.file.file_name || media.type, caption: clean(m.caption, 700), by: id, name: g?.name || name(m.from), at: new Date().toISOString() });
+      e.mediaUpdatedAt=e.media.at(-1).at;
       s.uploads = (s.uploads || 0) + 1;
       return;
     }
@@ -688,7 +689,7 @@ export class Bot {
     if(action==='photos-new'){this.session(id,{step:'photo-title'});return this.prompt(id,'Photo collection name? (up to 100 characters)');}
     if(action==='photo-names'){
       if(e?.kind!=='photos' || e.owner!==id || e.cancelled)return this.home(id,'Only the collection owner can change this setting.');
-      e.showUploaders=!showsUploaders(e);return this.mediaCard(id,e);
+      e.showUploaders=!showsUploaders(e);e.mediaUpdatedAt=new Date().toISOString();return this.mediaCard(id,e);
     }
     if (action === 'nav' && ['home', 'events', 'pending'].includes(eid)) return this.handle({ message: { from: q.from, chat: { id, type: 'private' }, text: { home: '/start', events: '/events', pending: '/pending' }[eid] } });
     if (action === 'media-add') {
@@ -861,7 +862,7 @@ export class Bot {
       if ((page + 1) * 5 < e.media.length) nav.push(button('Next →', `m:${eid}:${page + 1}`));
       return this.send(id, `Media page ${page + 1}`, keyboard(...(nav.length ? [nav] : []), [button('Back to event', `v:${eid}`)]));
     }
-    if (action === 'remove') { e.media = e.media.filter(f => f.id !== arg); return this.send(id, 'Removed from the event collection. Previously sent copies remain in Telegram chats.'); }
+    if (action === 'remove') { const count=e.media.length;e.media = e.media.filter(f => f.id !== arg);if(e.media.length!==count)e.mediaUpdatedAt=new Date().toISOString();return this.send(id, 'Removed from the event collection. Previously sent copies remain in Telegram chats.'); }
     if (action === 'h') {
       const rows=[[button('Guest responses', `a:${eid}`), button('Guest options', `permissions:${eid}`)], [button('Edit title', `edit:${eid}:title`), button('Edit time', `edit:${eid}:when`)], [button('Edit location', `edit:${eid}:location`), button('Edit description', `edit:${eid}:description`)], [button('Edit invite message',`edit:${eid}:inviteMessage`),button('🖼 Edit banner', `banner:${eid}`)]];
       if(invitationMode(e)==='named')rows.push([button('Invitation links',`invite-links:${eid}:0`)]);

@@ -20,3 +20,8 @@ export function uploadedMedia(message){
 export function mediaPayload(file,chatId,caption=file.caption){
   return {chat_id:chatId,[file.type]:file.fileId,...(!['sticker','video_note'].includes(file.type) && caption ? {caption}: {})};
 }
+export function mediaDates(event){
+  const valid=value=>typeof value==='string' && Number.isFinite(Date.parse(value));
+  const dates=[event.createdAt,event.mediaUpdatedAt,...(event.media || []).map(file=>file.at)].filter(valid);
+  return {createdAt:valid(event.createdAt)?event.createdAt:null,mediaUpdatedAt:dates.length?new Date(dates.reduce((latest,value)=>Math.max(latest,Date.parse(value)),-Infinity)).toISOString():null};
+}
