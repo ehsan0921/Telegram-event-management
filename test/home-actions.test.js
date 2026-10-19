@@ -107,6 +107,14 @@ test('media All, Own and Invited tabs filter ownership and show viewer/contribut
   f.nodes.get('stuff-scopes').dataset.scope='all';f.ui.renderEvents();assert.equal(f.cards('event-list').length,2);
 });
 
+test('media cards display creation and last activity beneath the name in the user timezone',()=>{
+  const album=event({kind:'photos',createdAt:'2026-10-01T00:00:00Z',mediaUpdatedAt:'2026-10-02T00:00:00Z'}),f=harness([album]);
+  f.nodes.get('stuff-type').value='media';f.ui.renderEvents();
+  const children=f.cards('event-list')[0].children,title=children.findIndex(node=>node.tag==='h3');
+  assert.match(children[title+1].textContent,/Created: 1 Oct 2026, 10:00 am/);
+  assert.match(children[title+2].textContent,/Last updated: 2 Oct 2026, 10:00 am/);
+});
+
 test('Home provides app navigation shortcuts alongside event cards',()=>{
   const section=html.slice(html.indexOf('id="home-view"'),html.indexOf('id="events-view"'));
   const shortcuts=section.match(/<nav\b[^>]*class="[^"]*home-shortcuts[^"]*"[^>]*>([\s\S]*?)<\/nav>/)?.[1];

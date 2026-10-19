@@ -449,6 +449,8 @@ try {
   assert.ok(!(await api('bootstrap')).data.events.some(e=>e.id===disposableId));
   const albumMade=await api('collections',{title:'Fictional disposable album',requestId:'12121212-1212-4212-8212-121212121212'});
   assert.equal(albumMade.status,200);
+  assert.ok(Number.isFinite(Date.parse(albumMade.data.event.createdAt)));
+  assert.equal(albumMade.data.event.mediaUpdatedAt,albumMade.data.event.createdAt,'New albums begin with their creation timestamp.');
   const albumId=albumMade.data.event.id;
   assert.equal((await api(`collections/${albumId}/members`,null,456)).status,403);
   await message(82100,'/start '+new URL(albumMade.data.event.photoLinks.viewer).searchParams.get('start'),456);

@@ -95,6 +95,8 @@ Owners can also open **Viewers & contributors** in the bot or expand it on the M
 
 Opening a valid album viewer or contributor link automatically joins that album and saves it in **My stuff** for later visits. Opening a viewer link does not downgrade existing contributor access. Under **My stuff → Media albums**, use **All**, **Own** and **Invited** to filter the list; cards show **Owner**, **Co-host**, **Viewer** or **Contributor** tags as applicable. Access remains subject to the album's current permissions and valid sharing tokens.
 
+Album cards show **Created** and **Last updated** below the album name in your saved timezone. Last updated tracks uploads, media removal, uploader-name settings and sharing changes; viewing or joining does not change it. Older albums use their saved creation/upload dates where available and show **Not recorded** when a date was never stored.
+
 Guests can choose **Leave media album** in the bot or Mini App. This removes their saved access and active upload session, while keeping contributed files in the album. A valid sharing link lets them join again. Owners manage or delete their albums instead of leaving them.
 
 For event invitations, **Remove invitation** removes the item from your My stuff list without deleting the organiser's guest records. For an event that has not finished, you can optionally cancel your RSVP and notify the organiser; payment, check-in and response-deadline protections still apply. Removing a past invitation keeps the historical RSVP and sends no cancellation notice. Removing only from My stuff preserves the RSVP and payment records and turns off your event reminder. Opening the original valid invitation again restores it to your list.
