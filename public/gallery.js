@@ -1,4 +1,4 @@
-export function setupGallery({ $, api, element, action, go, notice, openTelegram, initData }) {
+export function setupGallery({ $, api, element, action, go, notice, openTelegram, initData, renderAlbumDetails }) {
   let galleryEvent = null;
   let generation=0;
   let popupGeneration=0,qrGeneration=0;
@@ -26,6 +26,7 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
   async function openGallery(id) {
     const current=++generation;
     galleryEvent=id;go('gallery');$('gallery-error').hidden=true;
+    $('gallery-settings').replaceChildren();$('gallery-settings').hidden=true;
     $('gallery-title').textContent='Shared media';$('gallery-summary').textContent='Loading files…';
     $('gallery-upload').hidden=true;$('gallery-upload').onclick=null;
     for(const name of ['gallery-copy','gallery-qr']){$(name).hidden=true;$(name).onclick=null;}
@@ -33,6 +34,7 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
     for(const url of urls) URL.revokeObjectURL(url);urls.clear();
     try {
       const gallery=await api(`events/${id}/gallery`);if(current!==generation)return;
+      renderAlbumDetails?.(id,$('gallery-settings'));
       $('gallery-title').textContent=gallery.title;$('gallery-summary').textContent=`${gallery.media.length} shared files. Download here or send a file to your Telegram chat.`;
       $('gallery-upload').hidden=!gallery.canUpload;$('gallery-upload').onclick=()=>openTelegram(gallery.uploadUrl);
       $('gallery-copy').hidden=!gallery.galleryUrl;

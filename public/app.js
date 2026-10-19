@@ -19,7 +19,7 @@ async function updateAlbumAccess(event,operation){
     if(!await confirmAction(message,'album-'+operation))return;
     const result=await api(`collections/${event.id}/access`,{action:operation,confirm:true,version:event.albumAccessVersion || 0});
     Object.assign(event,result.event);const index=state.events.findIndex(item=>item.id===event.id);if(index>=0)state.events[index]=result.event;else state.events.push(result.event);
-    $('photo-links').hidden=true;$('stuff-type').value='media';go('events');
+    $('photo-links').hidden=true;$('stuff-type').value='media';await openGallery(event.id);
     notice(operation==='disable'?'Album is private to you. All shared access has been revoked.':'New links are ready. Old links and shared access have been revoked.');
     try{await refresh();}catch(error){notice('Sharing updated. Could not refresh: '+error.message);}
   }finally{albumAccessBusy.delete(event.id);}
@@ -347,7 +347,19 @@ async function openCheckin(id) {
   $('checkin-dialog').onclose=()=>{checkinGeneration++;try{tg?.closeScanQrPopup?.();}catch{}};
   $('checkin-dialog').showModal();update();
 }
-const {openGallery,showQr,dismissPendingMedia}=setupGallery({$,api,element,action,go,notice,openTelegram,initData});
+function renderAlbumDetails(id,node){
+  const event=state.events.find(item=>item.id===id);node.replaceChildren();node.hidden=!event;
+  if(!event)return;
+  for(const [label,value] of [['Created',event.createdAt],['Last updated',event.mediaUpdatedAt]]){
+    const date=value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-AU',{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit',timeZone:selectedZone()}).format(new Date(value)) : 'Not recorded';
+    node.append(element('p',label+': '+date,'small muted'));
+  }
+  node.append(element('h2','Album settings'));
+  if(!isManager(event))node.append(action(event.kind==='photos'?'Leave media album':'Remove invitation',()=>leaveStuff(event),'secondary'));
+  if(event.kind==='photos')appendPhotoLinks(node,event);
+  else node.append(element('p','Manage this gallery from its event in My stuff.','small muted'));
+}
+const {openGallery,showQr,dismissPendingMedia}=setupGallery({$,api,element,action,go,notice,openTelegram,initData,renderAlbumDetails});
 const {cancelEvent,deleteEvent}=setupEventActions({$,api,refresh,notice,onEnded:event=>{
   state.events=state.events.filter(item=>item.id!==event.id);
   if(activeEvent?.id===event.id){activeEvent=null;formReady=false;$('event-form').hidden=true;$('success').hidden=true;}
@@ -479,6 +491,7 @@ function renderEvents() {
   const list = $('event-list'); list.replaceChildren();
   $('events-heading').textContent = listFilter === 'pending' ? 'Pending invitations' : 'My stuff';
   const media=listFilter!=='pending' && $('stuff-type')?.value==='media';
+  list.className=media?'media-album-grid':'';
   const scopes=$('stuff-scopes'),scope=scopes?.dataset.scope || 'all';if(scopes)scopes.hidden=!media;
   $('zone-note').hidden=media;
   const events = [...state.events].filter(e => (media ? e.kind==='photos' || e.permissions?.viewMedia===true : e.kind!=='photos') && (!media || scope==='all' || (scope==='own'?e.isOwner:!e.isOwner)) && !e.cancelled && (isManager(e) || e.status !== 'no') && (listFilter !== 'pending' || (!isManager(e) && e.invitationMode!=='tickets' && e.status === 'later'))).sort((a, b) => (a.startsAt || '').localeCompare(b.startsAt || ''));
@@ -497,8 +510,6 @@ function renderEvents() {
       }
       card.append(action('Open album',()=>openGallery(e.id)));
       card.append(element('span',e.isOwner?'OWNER':e.isCoHost?'CO-HOST':e.mediaRole==='contributor'?'CONTRIBUTOR':'VIEWER','tag'));
-      if(e.kind==='photos')appendPhotoLinks(card,e);
-      if(!isManager(e))card.append(action(e.kind==='photos'?'Leave media album':'Remove invitation',()=>leaveStuff(e),'danger-button'));
       list.append(card);continue;
     }
     if (e.hasBanner) {

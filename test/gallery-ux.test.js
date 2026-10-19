@@ -4,6 +4,15 @@ import {setupGallery} from '../public/gallery.js';
 
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};}
 
+test('album page clears old settings and renders controls only after current gallery access succeeds',async t=>{
+  const pending=deferred(),rendered=[];
+  const f=galleryHarness(t,async path=>{if(path.includes('slow'))return pending.promise;if(path.includes('denied'))throw new Error('Access denied');return {title:'Example',media:[]};},(id,node)=>{rendered.push(id);node.append({textContent:'Settings'});node.hidden=false;});
+  await f.openGallery('first');assert.equal(f.$('gallery-settings').hidden,false);
+  const slow=f.openGallery('slow');assert.equal(f.$('gallery-settings').hidden,true);assert.equal(f.$('gallery-settings').children.length,0);
+  await f.openGallery('denied');pending.resolve({title:'Old',media:[]});await slow;
+  assert.deepEqual(rendered,['first']);assert.equal(f.$('gallery-settings').hidden,true);
+});
+
 test('full media preview shows uploader and caption and clears them for private attribution',async t=>{
   const file={id:'abcdef123456',type:'video',filename:'clip.mp4',name:'Fictional Alex',caption:'Example memories'};
   const f=galleryHarness(t,async()=>({title:'Fictional album',media:[file]}));
@@ -27,7 +36,7 @@ test('gallery shows a direct sharing action and respects disabled QR codes',asyn
   await f.$('gallery-qr').onclick();assert.equal(f.$('qr-title').textContent,'Shared media QR code');
   f.dismissPendingMedia();enabled=false;await f.openGallery('second');assert.equal(f.$('gallery-qr').hidden,true);assert.equal(f.$('gallery-copy').hidden,false);
 });
-function galleryHarness(t,api=async()=>({title:'Club meetup',media:[],canUpload:false})){
+function galleryHarness(t,api=async()=>({title:'Club meetup',media:[],canUpload:false}),renderAlbumDetails){
   class Node{
     constructor(tag='div',text=''){this.tagName=tag.toUpperCase();this.textContent=text;this.children=[];this.attributes={};this.isConnected=true;this.open=false;this.opens=0;this.pauses=0;this.loads=0;}
     append(...children){this.children.push(...children);}
@@ -57,7 +66,7 @@ function galleryHarness(t,api=async()=>({title:'Club meetup',media:[],canUpload:
   const $=id=>{if(!nodes.has(id))nodes.set(id,new Node());return nodes.get(id);};
   const element=(tag,text='',className='')=>Object.assign(new Node(tag,text),{className});
   const action=(text,onclick)=>Object.assign(new Node('button',text),{onclick});
-  const controls=setupGallery({$,api:(...args)=>{calls.push(args);return api(...args);},element,action,go:route=>routes.push(route),notice:message=>notices.push(message),openTelegram(){},initData:'fictional-init-data'});
+  const controls=setupGallery({$,api:(...args)=>{calls.push(args);return api(...args);},element,action,go:route=>routes.push(route),notice:message=>notices.push(message),openTelegram(){},initData:'fictional-init-data',renderAlbumDetails});
   const descendants=node=>[node,...node.children.flatMap(descendants)];
   return {$,calls,notices,routes,fetches,observers,...controls,setFetch(fn){fetchResult=fn;},button:text=>descendants($('gallery-list')).find(node=>node.tagName==='BUTTON' && node.textContent===text)};
 }

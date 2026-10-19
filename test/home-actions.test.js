@@ -111,6 +111,8 @@ test('media cards display creation and last activity beneath the name in the use
   const album=event({kind:'photos',createdAt:'2026-10-01T00:00:00Z',mediaUpdatedAt:'2026-10-02T00:00:00Z'}),f=harness([album]);
   f.nodes.get('stuff-type').value='media';f.ui.renderEvents();
   const children=f.cards('event-list')[0].children,title=children.findIndex(node=>node.tag==='h3');
+  assert.equal(f.nodes.get('event-list').className,'media-album-grid');
+  assert.equal(children.some(node=>node.tag==='details'),false,'Settings belong on the album page.');
   assert.match(children[title+1].textContent,/Created: 1 Oct 2026, 10:00 am/);
   assert.match(children[title+2].textContent,/Last updated: 2 Oct 2026, 10:00 am/);
 });
