@@ -4,6 +4,7 @@ import {albumMembers} from './album-members.js';
 import {changeAlbumAccess} from './album-access.js';
 import {leaveAlbum,removeInvitation} from './stuff.js';
 import {uploadedMedia,mediaMethods,mediaPayload} from './media-preview.js';
+import {mediaDeliveryState,queueMedia,notifyMediaFollowers} from './media-delivery.js';
 import {startBroadcast,toggleBroadcast,collectBroadcast,sendBroadcast,undoBroadcast} from './guest-messages.js';
 import {invitationMode,claimInvitation,invitationSettings,invitationParticipantMode,oneTimeInvites,invitationAvailable,consumeInvitation,reconcileInvitationClaims} from './invitations.js';
 import {isManager,cohostEntries,cohostIds,cohostGuard,cohostLink,createCohostInvite,revokeCohost,claimCohost} from './cohosts.js';
@@ -92,6 +93,20 @@ export class Bot {
   hasPending(id) { return Object.values(this.db.events).some(e => !this.db.preferences[id]?.hiddenEvents?.[e.id] && this.allowed(e,id) && !isManager(e,id) && invitationMode(e)!=='tickets' && !e.cancelled && e.guests[id]?.status === 'later'); }
   home(id, text = 'Welcome to XEvents 🎉\nTap Create to make an event or media album, or My stuff to find yours.',immediate=false) { return this.api('sendMessage',{chat_id:id,text,reply_markup:homeKeyboard(),...(immediate?{__broadcastNotice:true}:{})}); }
   session(id, value) { if (value) this.db.sessions[id] = value; else delete this.db.sessions[id]; }
+  uploadStatus(id, eid, message=this.uploadReceipt) {
+    const session=this.db.sessions[id];
+    eid ||= session?.step==='upload' ? session.event : this.db.preferences[id]?.lastUploadEvent;
+    const e=this.db.events[eid];
+    if(!e || e.cancelled || !this.mediaAllowed(e,id))return this.home(id,'This upload is no longer available.');
+    const uploading=session?.step==='upload' && session.event===eid;
+    const count=e.media.filter(item=>item.by===id).length;
+    const rows=[[button('↻ Refresh',`upload-status:${eid}`)]];
+    if(this.mediaCan(e,id,'uploadMedia'))rows.push([button('📎 Add media',`media-add:${eid}`)]);
+    if(this.mediaCan(e,id,'viewMedia') && this.appUrl)rows.push([this.miniButton('🗂 Shared media',`?gallery=${eid}`)]);
+    rows.push([button('Back',`v:${eid}`)]);
+    const edit=message?.chat?.id===id && Number.isSafeInteger(message.message_id) && message.message_id>0;
+    return this.api(edit?'editMessageText':'sendMessage',{chat_id:id,...(edit?{message_id:message.message_id}:{}),text:`${e.title}\n${uploading?'⏳ Uploads are still being received. Please wait, then tap Finish uploads.':'✅ Uploads finished.'}\n${count} of your files saved.\n${uploading?'Wait for Telegram to finish sending your files. Refresh to check the latest saved count.':'Your saved files are ready. If a file is missing, tap Add media to send it again.'}`,reply_markup:keyboard(...rows),__uploadNotice:true});
+  }
   link(e) { return `https://t.me/${this.username}?start=e_${e.id}`; }
   miniButton(text, params = '') { return { text, web_app: { url: this.appUrl + params } }; }
   time(e, id) { return eventTime(e, this.db.preferences[id]?.timezone); }
@@ -109,19 +124,26 @@ export class Bot {
   async mediaCard(id, e) {
     if (!this.mediaAllowed(e, id) || e.cancelled) return this.home(id, 'This media link is unavailable.');
     const rows=[];
+    if(e.kind==='photos'){
+      const state=mediaDeliveryState(this.db,id,e.id),received=new Set(state.received);
+      rows.push([button(`Get all media (${e.media.length})`,`media-get:${e.id}:all`),button(`Get new media (${e.media.filter(file=>!received.has(file.id)).length})`,`media-get:${e.id}:new`)]);
+      const browse=[];
+      if(this.appUrl)browse.push(this.miniButton('See media on the app',`?gallery=${e.id}`));
+      if(this.mediaCan(e,id,'uploadMedia'))browse.push(button('Add media',`media-add:${e.id}`));
+      if(browse.length)rows.push(browse);
+      const links=photoLinks(e,this.username),copies=[];
+      if(links?.viewer)copies.push({text:'Copy viewer link',copy_text:{text:links.viewer}});
+      if(links?.contributor && this.mediaCan(e,id,'uploadMedia'))copies.push({text:'Copy contributor link',copy_text:{text:links.contributor}});
+      if(copies.length)rows.push(copies);
+      rows.push([button(`Follow: ${state.follow?'On':'Off'}`,`media-follow:${e.id}:${state.follow?'off':'on'}`),button(menu.home,'nav:home')]);
+      if(e.owner===id)rows.push([button(showsUploaders(e)?'Uploader names: shown · Hide':'Uploader names: hidden · Show',`photo-names:${e.id}`),button('Viewers & contributors',`album-members:${e.id}`)],[button('Danger zone',`album-danger:${e.id}`)]);
+      else rows.push([button('Leave media album',`album-leave:${e.id}`)]);
+      return this.send(id,e.title,keyboard(...rows));
+    }
     if (this.mediaCan(e,id,'uploadMedia')) rows.push([button('📎 Add media',`media-add:${e.id}`)]);
     if (this.appUrl && this.mediaCan(e,id,'viewMedia')) rows.push([this.miniButton('🗂 Shared media',`?gallery=${e.id}`)]);
     if (!this.appUrl && this.mediaCan(e,id,'viewMedia')) rows.push([button('🗂 Shared media',`m:${e.id}:0`)]);
-    if(e.kind==='photos' && e.owner===id){
-      const links=photoLinks(e,this.username);
-      if(links?.viewer)rows.push([{text:'Copy viewer link',copy_text:{text:links.viewer}}]);
-      if(links?.contributor)rows.push([{text:'Copy contributor link',copy_text:{text:links.contributor}}]);
-      rows.push([button(showsUploaders(e)?'Uploader names: shown · Hide':'Uploader names: hidden · Show',`photo-names:${e.id}`)]);
-      rows.push([button('👥 Viewers & contributors',`album-members:${e.id}`)]);
-    }
-    if(e.kind==='photos' && !isManager(e,id))rows.push([button('Leave media album',`album-leave:${e.id}`)]);
     rows.push([button(menu.home,'nav:home')]);
-    if(e.kind==='photos' && e.owner===id)rows.push([button('Danger zone',`album-danger:${e.id}`)]);
     if (e.banner) return this.api('sendPhoto',{chat_id:id,photo:e.banner,caption:e.title,reply_markup:keyboard(...rows)});
     return this.send(id,e.title,keyboard(...rows));
   }
@@ -506,12 +528,18 @@ export class Bot {
     if (s.response && responsesClosed(e)) { this.session(id); await this.home(id, 'The response deadline has passed.'); return this.card(id, e); }
     if (s.step === 'upload') {
       if ((!s.uploadToken && !can(e, id, 'uploadMedia')) || (s.uploadToken && !linkUploader)) { this.session(id); return this.home(id, 'The organiser has disabled these uploads.'); }
-      if (command === '/done') { this.session(id); await this.home(id, `✅ Uploads finished${s.uploads ? ': ' + s.uploads + ' saved' : ''}.`); if (s.mediaOnly) return this.mediaCard(id,e); if (this.allowed(e, id)) return this.card(id, e); return; }
+      if (command === '/done') {
+        this.session(id);
+        this.db.preferences[id] ||= {};this.db.preferences[id].lastUploadEvent=e.id;
+        await this.api('sendMessage',{chat_id:id,text:`✅ Uploads finished${s.uploads ? ': ' + s.uploads + ' saved' : ''}.`,reply_markup:homeKeyboard(),__uploadNotice:true});
+        return this.uploadStatus(id,e.id);
+      }
       const media = uploadedMedia(m);
       if (!media) return this.prompt(id, 'Send a photo, video, or file. Tap Finish uploads when finished.');
       e.media.push({ id: randomBytes(6).toString('hex'), type: media.type, fileId: media.file.file_id, mimeType:media.file.mime_type || null,thumbnail:media.file.thumbnail?.file_id || media.file.thumb?.file_id || null,size: media.file.file_size || null, filename: media.file.file_name || media.type, caption: clean(m.caption, 700), by: id, name: g?.name || name(m.from), at: new Date().toISOString() });
       e.mediaUpdatedAt=e.media.at(-1).at;
       s.uploads = (s.uploads || 0) + 1;
+      await notifyMediaFollowers(this,e,e.media.at(-1));
       return;
     }
     if (s.step === 'edit') {
@@ -604,7 +632,10 @@ export class Bot {
     if(e?.kind!=='photos' || e.owner!==id)return this.send(id,'Only the album owner can delete this media album.');
     delete this.db.events[e.id];
     for(const [uid,session] of Object.entries(this.db.sessions))if(session.event===e.id)delete this.db.sessions[uid];
-    for(const preference of Object.values(this.db.preferences))if(preference.mediaAccess)delete preference.mediaAccess[e.id];
+    for(const preference of Object.values(this.db.preferences)){
+      if(preference.mediaAccess)delete preference.mediaAccess[e.id];
+      if(preference.mediaDelivery)delete preference.mediaDelivery[e.id];
+    }
     return this.home(id,'Media album deleted. Its sharing links no longer work. Files already sent to Telegram chats remain there.');
   }
   async callback(q) {
@@ -612,7 +643,24 @@ export class Bot {
     const id = q.from.id;
     const [action, eid, arg, version] = (q.data || '').split(':');
     const e = this.db.events[eid];
-    if(q.id)await this.api('answerCallbackQuery', { callback_query_id: q.id }).catch(() => {});
+    if(q.id)await this.api('answerCallbackQuery', { callback_query_id: q.id,...(action==='upload-status'?{__uploadNotice:true}:{}) }).catch(() => {});
+    if(action==='upload-status')return this.uploadStatus(id,eid,q.message);
+    if(action==='media-get' || action==='media-follow'){
+      if(e?.kind!=='photos' || !this.mediaAllowed(e,id) || !this.mediaCan(e,id,'viewMedia'))return this.home(id,'This media link is unavailable.');
+      const state=mediaDeliveryState(this.db,id,e.id);
+      if(action==='media-follow'){
+        if(!['on','off'].includes(arg))return this.mediaCard(id,e);
+        state.follow=arg==='on';state.followToken=randomBytes(8).toString('hex');
+        await this.send(id,state.follow?'Following this album. New media will be sent to your Telegram chat.':'Follow is off. New media will no longer be sent automatically.');
+      }else{
+        if(!['all','new'].includes(arg))return this.mediaCard(id,e);
+        const received=new Set(state.received),files=e.media.filter(file=>arg==='all' || !received.has(file.id));
+        let queued=0;
+        for(const file of files)if(await queueMedia(this,id,e,file))queued++;
+        await this.send(id,queued?`${queued} files queued for your Telegram chat.`:files.length?'Your media is already queued. Please wait for delivery.':'No new media to send.');
+      }
+      return this.mediaCard(id,e);
+    }
     if(['album-danger','album-disable','album-regenerate','album-access-confirm'].includes(action)){
       if(e?.kind!=='photos' || e.owner!==id || e.cancelled)return this.send(id,'Only the creator can change album sharing.');
       if(action==='album-danger')return this.send(id,`Danger zone · ${e.title}\n${e.sharingDisabled?'Private to you. Regenerating links enables sharing again.':'Sharing changes revoke all current viewer and contributor access.'}\nPreviously downloaded or sent copies cannot be recalled.`,keyboard(...(!e.sharingDisabled?[[button('Disable album',`album-disable:${e.id}`)]]:[]),[button('Regenerate sharing links',`album-regenerate:${e.id}`)],[button('Delete media album',`album-delete:${e.id}`)],[button('Back to album',`v:${e.id}`)]));

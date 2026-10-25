@@ -24,6 +24,7 @@ export async function mutateState(env, action, updateId) {
     const before = new Map(results.map(r => [`${r.kind}:${r.id}`, r.data]));
     const messages = [];
     const bot = new Bot({ data }, async (method, params) => { messages.push({ method, params }); return {}; }, env.BOT_USERNAME, env.APP_URL);
+    bot.durableMediaDelivery=true;
     bot.productionSnapshot = await snapshotActive(env);
     bot.albumMembersFor=e=>readAlbumMembers(env,e);
     bot.pricing=await readOnlinePricing(env,data.preferences._pricing);

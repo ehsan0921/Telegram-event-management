@@ -10,6 +10,7 @@ import {refreshOnlineRates} from './exchange.js';
 import { botCommands, botCommandsVersion } from './telegram-menu.js';
 import { handleWhitelistCommand, mayUseTestApp, testAccessMessage } from './test-access.js';
 import { snapshotActive, snapshotDeliveryAllowed } from './snapshot-mode.js';
+import {mediaDeliveryPayload,mediaDeliveryResult} from './media-delivery.js';
 
 export async function authorized(request, secret) {
   if (!secret) return false;
@@ -19,12 +20,12 @@ export async function authorized(request, secret) {
   return crypto.subtle.timingSafeEqual(a, b);
 }
 
-async function telegram(env, method, params) {
+async function telegram(env, method, params, timeout) {
   if (!await snapshotDeliveryAllowed(env, method, params)) return { ok: false, error_code: 403, snapshotBlocked: true };
   let response;
   try {
     response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
-      method: 'POST', ...telegramPayload(params), signal: AbortSignal.timeout(method === 'answerPreCheckoutQuery' ? 5000 : 10000)
+      method: 'POST', ...telegramPayload(params), signal: AbortSignal.timeout(timeout ?? (method === 'answerPreCheckoutQuery' ? 5000 : 10000))
     });
   } catch { return { ok: false, error_code: 503 }; }
   try { return await response.json(); } catch { return { ok: false, error_code: 503 }; }
@@ -46,6 +47,13 @@ export async function processUpdate(env, update) {
     }
     const whitelistResponse = await handleWhitelistCommand(env, update);
     if (whitelistResponse) return whitelistResponse;
+    // A transient receipt is deliberately outside the state lease and delivery
+    // queue. Only the durable outbox may confirm that saving has succeeded.
+    let uploadReceipt;
+    if(user && !user.is_bot && update.message?.chat?.type==='private' && /^(?:✅ Finish uploads|\/done(?:@\w+)?(?:\s.*)?)$/.test(update.message.text?.trim() || '')) {
+      const receipt=await telegram(env,'sendMessage',{chat_id:user.id,text:'⏳ Finish uploads received. Please wait while your saved uploads are checked. Tap Refresh if the confirmation has not arrived yet.',reply_markup:{inline_keyboard:[[{text:'↻ Refresh',callback_data:'upload-status'}]]}},1500);
+      if(receipt.ok)uploadReceipt=receipt.result;
+    }
     if (update.pre_checkout_query) {
       const decision = await mutateState(env, (data, bot) => checkout(bot, update.pre_checkout_query));
       const result = await telegram(env, 'answerPreCheckoutQuery', decision);
@@ -58,6 +66,7 @@ export async function processUpdate(env, update) {
           ? bot.api('answerCallbackQuery', { callback_query_id: update.callback_query.id, text: testAccessMessage, show_alert: true })
           : bot.send(update.message.chat.id, testAccessMessage);
       }
+      bot.uploadReceipt=uploadReceipt;
       return bot.handle(update);
     }, update.update_id);
     return new Response('OK');
@@ -86,15 +95,21 @@ export async function drainOutbox(env, immediate=false, attempt=0) {
   const deadline = Date.now() + 20000;
   try {
   deliveryLoop: do {
-  const query=immediate ? "SELECT id,due FROM outbox ORDER BY CASE WHEN json_type(params,'$.__broadcastDelete') IS NOT NULL THEN 0 WHEN json_type(params,'$.__broadcastNotice') IS NOT NULL THEN 1 WHEN json_type(params,'$.__broadcast') IS NOT NULL THEN 2 ELSE 3 END,rowid LIMIT 20" : 'SELECT id,due FROM outbox ORDER BY rowid LIMIT 20';
+  const priority="CASE WHEN json_type(params,'$.__uploadNotice') IS NOT NULL THEN 0 ELSE 1 END";
+  const query=immediate ? `SELECT id,due FROM outbox WHERE due<=unixepoch() ORDER BY ${priority},CASE WHEN json_type(params,'$.__broadcastDelete') IS NOT NULL THEN 0 WHEN json_type(params,'$.__broadcastNotice') IS NOT NULL THEN 1 WHEN json_type(params,'$.__broadcast') IS NOT NULL THEN 2 ELSE 3 END,rowid LIMIT 20` : `SELECT id,due FROM outbox WHERE due<=unixepoch() ORDER BY ${priority},rowid LIMIT 20`;
   const { results } = await env.DB.prepare(query).all();
   if(!results.length)break;
   for (const { id, due } of results) {
     if (Date.now() > deadline || due > Math.floor(Date.now() / 1000)) break deliveryLoop;
     const row = await env.DB.prepare('UPDATE outbox SET due=unixepoch()+60, attempts=attempts+1 WHERE id=? AND due<=unixepoch() RETURNING *').bind(id).first();
     if (!row) continue;
-    const {__broadcast:tracking,__broadcastDelete:deletion,__broadcastNotice,__broadcastDelivered:delivered,...deliveryParams}=JSON.parse(row.params);
+    const {__mediaDelivery:mediaTracking,__mediaDelivered:mediaDelivered,__broadcast:tracking,__broadcastDelete:deletion,__broadcastNotice,__broadcastDelivered:delivered,...deliveryParams}=JSON.parse(row.params);
     try{
+    if(mediaTracking && !mediaDelivered){
+      const current=await mutateState(env,(_data,bot)=>mediaDeliveryPayload(bot,mediaTracking));
+      if(!current){await mutateState(env,data=>mediaDeliveryResult(data,mediaTracking,false));await env.DB.prepare('DELETE FROM outbox WHERE id=?').bind(id).run();continue;}
+      Object.assign(deliveryParams,current);
+    }
     if(tracking && !delivered){
       const allowed=await mutateState(env,data=>{
         const record=broadcastRecord(data,tracking.owner,tracking.token);
@@ -103,7 +118,14 @@ export async function drainOutbox(env, immediate=false, attempt=0) {
       });
       if(!allowed){await env.DB.prepare('DELETE FROM outbox WHERE id=?').bind(id).run();continue;}
     }
-    let result = delivered ? {ok:true,result:{message_id:delivered}} : await telegram(env, row.method, deliveryParams);
+    let result = delivered || mediaDelivered ? {ok:true,result:{message_id:delivered || mediaDelivered}} : await telegram(env, row.method, deliveryParams);
+    if(mediaTracking && result.ok){
+      if(!mediaDelivered){
+        row.params=JSON.stringify({...deliveryParams,__mediaDelivery:mediaTracking,__mediaDelivered:true});
+        await env.DB.prepare('UPDATE outbox SET method=?,params=? WHERE id=?').bind(row.method,row.params,id).run();
+      }
+      await mutateState(env,data=>mediaDeliveryResult(data,mediaTracking,true));
+    }
     if(tracking && result.ok && Number.isSafeInteger(result.result?.message_id) && result.result.message_id>0) {
       if(!delivered){
         row.params=JSON.stringify({...deliveryParams,__broadcast:tracking,__broadcastDelivered:result.result.message_id});
@@ -111,7 +133,7 @@ export async function drainOutbox(env, immediate=false, attempt=0) {
       }
       await mutateState(env,(_data,bot)=>broadcastReceipt(bot,tracking.owner,tracking.token,deliveryParams.chat_id,result.result.message_id));
     }
-    const fallback = row.method === 'sendPhoto' && unavailablePhotoFallback(JSON.parse(row.params), result);
+    const fallback = !mediaTracking && row.method === 'sendPhoto' && unavailablePhotoFallback(JSON.parse(row.params), result);
     if (fallback) {
       // Keep the same durable delivery identity. A retry sends the text card, not
       // the permanently invalid photo. Snapshot recipient checks still apply.
@@ -124,6 +146,7 @@ export async function drainOutbox(env, immediate=false, attempt=0) {
       await mutateState(env, (data,bot) => refundResult(bot,params.user_id,params.telegram_payment_charge_id,result.ok));
     }
     if (result.ok || [400, 403].includes(result.error_code)) {
+      if(mediaTracking && !result.ok)await mutateState(env,data=>mediaDeliveryResult(data,mediaTracking,false));
       if(deletion || tracking && !result.ok){
         const target=deletion || tracking;
         await mutateState(env,data=>broadcastDeliveryResult(data,target.owner,target.token,deliveryParams.chat_id,result,deletion?deliveryParams.message_id:undefined));

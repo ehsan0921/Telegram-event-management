@@ -15,6 +15,7 @@ export function leaveAlbum(data,id,album){
   if(album?.kind!=='photos' || isManager(album,id))throw new InputError('Only guests can leave a media album. Owners can delete it.');
   const preference=data.preferences[id];
   if(preference?.mediaAccess)delete preference.mediaAccess[album.id];
+  if(preference?.mediaDelivery)delete preference.mediaDelivery[album.id];
   if(data.sessions[id]?.event===album.id)delete data.sessions[id];
 }
 

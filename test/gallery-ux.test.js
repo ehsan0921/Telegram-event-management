@@ -147,7 +147,7 @@ test('closing a photo popup suppresses an older pending preview without blocking
   const photo={id:'222222222222',type:'photo',filename:'club-photo.jpg',name:'Fictional guest',hasThumbnail:true};
   const f=galleryHarness(t,async()=>({title:'Club meetup',media:[photo],canUpload:false}));
   await f.openGallery('first');await f.observers[0].intersect();
-  const image=f.observers[0].node;
+  const image=f.observers[0].node.children.find(node=>node.tagName==='IMG');
   await image.onclick();assert.equal(f.$('photo-dialog').opens,1);
   const pending=deferred();f.setFetch(()=>pending.promise);
   const loading=image.onclick();f.$('photo-close').onclick();
@@ -156,4 +156,25 @@ test('closing a photo popup suppresses an older pending preview without blocking
   f.setFetch(()=>Promise.resolve(new Response(new Blob(['fictional photo'],{type:'image/jpeg'}))));
   await image.onclick();assert.equal(f.$('photo-dialog').opens,2);assert.equal(f.$('photo-dialog').open,true);
   f.dismissPendingMedia();
+});
+
+test('previews show loading, recover from fetch and decode failures, and keep file actions available',async t=>{
+  const f=galleryHarness(t,async()=>({title:'Fictional album',media:[{id:'111111111111',type:'photo',filename:'photo',at:'2026-10-26T01:00:00Z'}]}));
+  await f.openGallery('first');
+  const card=f.$('gallery-list').children[0],status=card.children[0],image=card.children.find(node=>node.tagName==='IMG');
+  assert.equal(status.attributes.role,'status');assert.match(status.children[1].textContent,/Loading/);assert.equal(image.hidden,true);
+  f.setFetch(async()=>{throw Error('Fictional fetch failure');});
+  await f.observers[0].intersect();
+  const refresh=f.button('↻ Refresh preview');assert.equal(refresh.hidden,false);assert.equal(refresh.disabled,false);
+  assert.ok(f.button('Download'));assert.ok(f.button('Send to Telegram'));
+  f.setFetch(async()=>new Response(new Blob(['fictional image'],{type:'image/jpeg'})));
+  await refresh.onclick();assert.equal(refresh.disabled,true);assert.equal(status.children[0].hidden,false);
+  image.onerror();assert.equal(refresh.hidden,false);
+  await refresh.onclick();image.onload();assert.equal(status.hidden,true);assert.equal(image.hidden,false);
+});
+
+test('gallery defaults to the newest media first',async t=>{
+  const f=galleryHarness(t,async()=>({title:'Fictional album',media:[{id:'old',type:'document',filename:'Old',at:'2026-10-01T00:00:00Z'},{id:'new',type:'document',filename:'New',at:'2026-10-26T00:00:00Z'}]}));
+  await f.openGallery('first');
+  assert.deepEqual(f.$('gallery-list').children.map(card=>card.children[0].children[0].textContent),['New','Old']);
 });
