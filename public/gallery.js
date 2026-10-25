@@ -4,6 +4,10 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
   let popupGeneration=0,qrGeneration=0;
   const urls = new Set();
   const filename = file => file.filename==='photo'?'photo.jpg':file.filename==='video'?'video.mp4':file.filename;
+  function iconAction(icon,label,onclick){
+    const button=action(label,onclick),symbol=element('span',icon+' ');
+    symbol.setAttribute('aria-hidden','true');button.prepend(symbol);return button;
+  }
   function showMedia(id,file,blob,url) {
     $('media-uploader').textContent=file.name ? 'Uploaded by '+file.name : '';
     $('media-uploader').hidden=!file.name;
@@ -57,9 +61,9 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
         }
         body.append(element('strong',file.filename==='photo'?'Photo':file.filename),element('p',[file.name?'Shared by '+file.name:'',file.caption].filter(Boolean).join('\n'),'small muted'));
         const buttons=element('div','','event-actions');
-        buttons.append(action('Download',async()=>{try{saveBlob(await mediaBlob(id,file.id),file.filename==='photo'?'photo.jpg':file.filename==='video'?'video.mp4':file.filename);}catch(error){notice(error.message);}}));
-        buttons.append(action('Send to Telegram',async()=>{try{await api(`events/${id}/media/${file.id}/send`,{});notice('File sent to your Telegram chat.');}catch(error){notice(error.message);}}));
-        if(kind==='video')buttons.append(action('Play video',async()=>{const pending=++popupGeneration;try{const blob=await mediaBlob(id,file.id);if(current!==generation || pending!==popupGeneration)return;const url=URL.createObjectURL(blob);urls.add(url);showMedia(id,previewFile,blob,url);}catch(error){if(current===generation && pending===popupGeneration)notice(error.message);}}));
+        buttons.append(iconAction('⬇','Download',async()=>{try{saveBlob(await mediaBlob(id,file.id),file.filename==='photo'?'photo.jpg':file.filename==='video'?'video.mp4':file.filename);}catch(error){notice(error.message);}}));
+        buttons.append(iconAction('✈','Send to Telegram',async()=>{try{await api(`events/${id}/media/${file.id}/send`,{});notice('File sent to your Telegram chat.');}catch(error){notice(error.message);}}));
+        if(kind==='video')buttons.append(iconAction('▶','Play video',async()=>{const pending=++popupGeneration;try{const blob=await mediaBlob(id,file.id);if(current!==generation || pending!==popupGeneration)return;const url=URL.createObjectURL(blob);urls.add(url);showMedia(id,previewFile,blob,url);}catch(error){if(current===generation && pending===popupGeneration)notice(error.message);}}));
         body.append(buttons);card.append(body);list.append(card);
       }
     }catch(error){if(current!==generation)return;$('gallery-list').replaceChildren();$('gallery-summary').textContent='';$('gallery-error').textContent=error.message;$('gallery-error').hidden=false;}
@@ -86,6 +90,7 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
       $('qr-title').textContent=shared?'Shared media QR code':'Upload link & QR code';
       $('upload-qr').alt=shared?'QR code for shared media':'QR code for event uploads';
       $('qr-share').textContent=shared?'Share shared media link':'Share upload link';
+      const shareIcon=element('span','✈ ');shareIcon.setAttribute('aria-hidden','true');$('qr-share').prepend(shareIcon);
       $('qr-description').textContent=shared?'Scan to open Shared media. Event access and viewing permissions still apply.':qr.anyone ? 'Anyone with this link can add media without an RSVP. They can view Shared media if you enable viewing. Private event details stay hidden.' : 'Existing event guests can scan this code to add media. Enable uploads by link in event settings to let anyone contribute without an RSVP.';
       $('qr-share').onclick=()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(qr.link)}&text=${encodeURIComponent('Share your event photos and files')}`);
       $('qr-download').onclick=()=>{const bytes=Uint8Array.from(atob(qr.image.split(',')[1]),character=>character.charCodeAt(0));saveBlob(new Blob([bytes],{type:'image/gif'}),'event-upload-qr.gif');};$('qr-dialog').showModal();
