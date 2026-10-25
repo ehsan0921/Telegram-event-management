@@ -1,9 +1,10 @@
 import qrcode from 'qrcode-generator';
-import {mediaPreview,previewMime,mediaMethods,mediaPayload} from './media-preview.js';
+import {mediaPreview,previewMime} from './media-preview.js';
 import {mediaCan,mediaRole,photoLinks,showsUploaders,shareUploadLink} from './permissions.js';
 import { mutateState } from './worker-store.js';
 import {isManager} from './cohosts.js';
 import {invitationAvailable} from './invitations.js';
+import {queueMedia} from './media-delivery.js';
 
 
 export async function mediaApi(request, env, user) {
@@ -42,7 +43,7 @@ export async function mediaApi(request, env, user) {
       const current = data.events[e.id];
       if (!bot.mediaAllowed(current, user.id) || !bot.mediaCan(current, user.id, 'viewMedia')) throw new Error('Access changed');
       const file = current.media.find(item => item.id === f.id); if (!file) throw new Error('File removed');
-      await bot.api(mediaMethods[file.type], mediaPayload(file,user.id));
+      await queueMedia(bot,user.id,current,file);
     });
     return json({ sent: true });
   }

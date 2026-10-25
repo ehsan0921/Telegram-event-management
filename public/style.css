@@ -130,3 +130,9 @@ body.dark .guest-roster-row[data-status=yes]{background:#203c2e}body.dark .guest
 .media-album-grid button::after{content:"";position:absolute;inset:0}
 .media-album-grid .event-card:focus-within{outline:2px solid var(--accent,#5686ef);outline-offset:3px}
 .album-page-settings{margin-top:28px;border-top:1px solid var(--border,#ccc);padding-top:20px}
+:root .media-preview-status{min-height:180px;aspect-ratio:16/9;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:20px;text-align:center;background:var(--bg)}
+:root .media-preview-status[hidden],:root .media-spinner[hidden]{display:none}
+.media-spinner{width:30px;height:30px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:media-spin .8s linear infinite}
+.media-preview-status p{margin:0}.media-preview-status button{color:var(--text);background:var(--panel);border:1px solid var(--line)}
+@keyframes media-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.media-spinner{animation:none}}

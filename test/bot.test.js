@@ -26,6 +26,41 @@ function fixture() {
   return { store, bot, calls, msg, cb, create };
 }
 
+test('finish uploads gives a lightweight refreshable summary and refresh rechecks access',async()=>{
+  const f=fixture(),e=await f.create();
+  await f.cb(1,`u:${e.id}`);
+  for(let i=0;i<3;i++)await f.msg(1,undefined,{document:{file_id:`fictional-upload-${i}`}});
+  f.calls.length=0;
+  await f.msg(1,'✅ Finish uploads');
+  assert.equal(f.store.data.sessions[1],undefined);
+  assert.equal(f.calls.length,2);
+  assert.ok(f.calls.every(call=>call.method==='sendMessage' && call.__uploadNotice));
+  assert.match(f.calls[0].text,/3 saved/);
+  assert.ok(f.calls[0].reply_markup.keyboard);
+  assert.match(f.calls[1].text,/3 of your files saved/);
+  const refresh=f.calls[1].reply_markup.inline_keyboard.flat().find(button=>button.text==='↻ Refresh');
+  assert.equal(refresh.callback_data,`upload-status:${e.id}`);
+  e.media.pop();await f.cb(1,refresh.callback_data);
+  assert.match(f.calls.at(-1).text,/2 of your files saved/);
+  await f.bot.handle({callback_query:{id:'fictional-refresh',from:{id:1},data:refresh.callback_data,message:{chat:{id:1},message_id:42}}});
+  assert.equal(f.calls.at(-1).method,'editMessageText');assert.equal(f.calls.at(-1).message_id,42);
+  await f.cb(9,refresh.callback_data);
+  assert.match(f.calls.at(-1).text,/no longer available/);
+  e.cancelled=true;await f.cb(1,refresh.callback_data);
+  assert.match(f.calls.at(-1).text,/no longer available/);
+});
+
+test('waiting upload refresh preserves the active upload session and counts only own files',async()=>{
+  const f=fixture(),e=await f.create();
+  await f.cb(1,`u:${e.id}`);
+  await f.msg(1,undefined,{document:{file_id:'fictional-own-file'}});
+  e.media.push({by:8,fileId:'fictional-other-file'});
+  await f.cb(1,'upload-status');
+  assert.match(f.calls.at(-1).text,/still being received/);
+  assert.match(f.calls.at(-1).text,/1 of your files saved/);
+  assert.equal(f.store.data.sessions[1].step,'upload');
+});
+
 test('event settings identify the event and response refresh loads current counts for managers only',async()=>{
   const f=fixture(),e=await f.create();
   await f.cb(1,`h:${e.id}`);
@@ -536,8 +571,10 @@ test('media links show only banner/title and media actions without RSVP and revo
   assert.ok(buttons.some(b=>b.text==='🗂 Shared media' && b.web_app));
   assert.ok(!buttons.some(b=>b.callback_data?.startsWith('r:')));
   assert.equal(f.bot.mediaAllowed(e,99),true);await f.cb(99,`media-add:${e.id}`);await f.msg(99,undefined,{photo:[{file_id:'one'}]});await f.msg(99,'/done');
-  assert.equal(f.calls.at(-1).caption,e.title);assert.doesNotMatch(f.calls.at(-1).caption,/PRIVATE/);
+  assert.match(f.calls.at(-1).text,/Uploads finished/);assert.ok(f.calls.at(-1).text.startsWith(e.title));assert.doesNotMatch(f.calls.at(-1).text,/PRIVATE/);
+  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='↻ Refresh'));
   await f.cb(1,`toggle:${e.id}:allowLinkUploads`);assert.equal(f.bot.mediaAllowed(e,99),false);
+  await f.cb(99,`upload-status:${e.id}`);assert.match(f.calls.at(-1).text,/no longer available/);
 });
 
 test('organiser media sharing has its own copy and QR row with protected chat QR delivery',async()=>{

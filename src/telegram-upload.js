@@ -15,7 +15,7 @@ export function qrPhoto(link){
   return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',header),chunk('IDAT',deflateSync(raw)),chunk('IEND',Buffer.alloc(0))]).toString('base64');
 }
 export function telegramPayload(params){
-  const {__photoUpload,...safe}=params;
+  const {__photoUpload,__uploadNotice,__mediaDelivery,__mediaDelivered,...safe}=params;
   if(!__photoUpload)return {headers:{'Content-Type':'application/json'},body:JSON.stringify(safe)};
   const body=new FormData();
   for(const [key,value] of Object.entries(safe))if(value!==undefined)body.append(key,typeof value==='object'?JSON.stringify(value):String(value));

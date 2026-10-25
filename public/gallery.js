@@ -20,7 +20,7 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
   }
   function saveBlob(blob, filename) { const url=URL.createObjectURL(blob); const link=document.createElement('a');link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),60000); }
   async function mediaBlob(eventId, fileId,thumbnail=false) {
-    const response=await fetch(`/api/events/${eventId}/media/${fileId}${thumbnail?'/thumbnail':''}`,{headers:{Authorization:'tma '+initData}});
+    const response=await fetch(`/api/events/${eventId}/media/${fileId}${thumbnail?'/thumbnail':''}`,{headers:{Authorization:'tma '+initData},signal:AbortSignal.timeout(30000)});
     if(!response.ok){const data=await response.json();throw new Error(data.error || 'Could not download this file.');}return response.blob();
   }
   async function openGallery(id) {
@@ -42,15 +42,18 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
       $('gallery-qr').hidden=!gallery.galleryUrl || gallery.qrEnabled===false;
       $('gallery-qr').onclick=()=>showQr(id,true);
       const list=$('gallery-list');list.replaceChildren();if(!gallery.media.length)list.append(element('p','No files have been shared yet.','muted'));
-      for(const file of gallery.media) {
+      const sortedMedia=gallery.media.map((file,index)=>({file,index})).sort((a,b)=>(Date.parse(b.file.at) || 0)-(Date.parse(a.file.at) || 0) || b.index-a.index).map(item=>item.file);
+      for(const file of sortedMedia) {
         const kind=file.previewKind || (['photo','video'].includes(file.type)?file.type:null),previewFile={...file,type:kind};
         const card=element('article','','gallery-item');const body=element('div','','gallery-item-body');
         if(kind==='photo' || (kind==='video' && file.hasThumbnail)) {
-          const img=document.createElement('img');img.alt=file.caption || `${kind==='video'?'Video preview':'Photo'}${file.name?' shared by '+file.name:''}`;img.loading='lazy';card.append(img);
-          const observer=new IntersectionObserver(async entries=>{if(!entries.some(entry=>entry.isIntersecting))return;observer.disconnect();try{const blob=await mediaBlob(id,file.id,file.hasThumbnail);if(!img.isConnected || current!==generation)return;const url=URL.createObjectURL(blob);urls.add(url);img.src=url;img.onclick=async()=>{const pending=++popupGeneration;try{const full=file.hasThumbnail?await mediaBlob(id,file.id):blob;if(!img.isConnected || current!==generation || pending!==popupGeneration)return;const fullUrl=file.hasThumbnail?URL.createObjectURL(full):url;urls.add(fullUrl);showMedia(id,previewFile,full,fullUrl);}catch(error){if(current===generation && pending===popupGeneration)notice(error.message);}};}catch(error){if(current!==generation)return;img.remove();body.prepend(element('p',error.message,'small muted'));}});observer.observe(img);
+          const img=document.createElement('img');img.alt=file.caption || `${kind==='video'?'Video preview':'Photo'}${file.name?' shared by '+file.name:''}`;card.append(img);
+          const load=previewLoader(card,img,current,async()=>{const blob=await mediaBlob(id,file.id,file.hasThumbnail);if(!img.isConnected || current!==generation)return;const url=URL.createObjectURL(blob);urls.add(url);img.src=url;img.onclick=async()=>{const pending=++popupGeneration;try{const full=file.hasThumbnail?await mediaBlob(id,file.id):blob;if(!img.isConnected || current!==generation || pending!==popupGeneration)return;const fullUrl=file.hasThumbnail?URL.createObjectURL(full):url;urls.add(fullUrl);showMedia(id,previewFile,full,fullUrl);}catch(error){if(current===generation && pending===popupGeneration)notice(error.message);}};});
+          const observer=new IntersectionObserver(entries=>{if(!entries.some(entry=>entry.isIntersecting))return;observer.disconnect();return load();});observer.observe(card);
         }else if(kind==='video'){
           const video=document.createElement('video');video.muted=true;video.playsInline=true;video.preload='metadata';video.setAttribute('aria-label',file.caption || 'Video preview');card.append(video);
-          const observer=new IntersectionObserver(async entries=>{if(!entries.some(entry=>entry.isIntersecting))return;observer.disconnect();try{const blob=await mediaBlob(id,file.id);if(!video.isConnected || current!==generation)return;const url=URL.createObjectURL(blob);urls.add(url);video.src=url;video.onloadeddata=()=>{try{video.currentTime=.1;}catch{}};video.onclick=()=>{if(current!==generation)return;++popupGeneration;showMedia(id,previewFile,blob,url);};}catch(error){if(current!==generation)return;video.remove();body.prepend(element('p',error.message,'small muted'));}});observer.observe(video);
+          const load=previewLoader(card,video,current,async()=>{const blob=await mediaBlob(id,file.id);if(!video.isConnected || current!==generation)return;const url=URL.createObjectURL(blob);urls.add(url);video.src=url;video.onclick=()=>{if(current!==generation)return;++popupGeneration;showMedia(id,previewFile,blob,url);};});
+          const observer=new IntersectionObserver(entries=>{if(!entries.some(entry=>entry.isIntersecting))return;observer.disconnect();return load();});observer.observe(card);
         }
         body.append(element('strong',file.filename==='photo'?'Photo':file.filename),element('p',[file.name?'Shared by '+file.name:'',file.caption].filter(Boolean).join('\n'),'small muted'));
         const buttons=element('div','','event-actions');
@@ -60,6 +63,22 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
         body.append(buttons);card.append(body);list.append(card);
       }
     }catch(error){if(current!==generation)return;$('gallery-list').replaceChildren();$('gallery-summary').textContent='';$('gallery-error').textContent=error.message;$('gallery-error').hidden=false;}
+  }
+  function previewLoader(card,preview,current,fetchPreview){
+    const status=element('div','','media-preview-status'),spinner=element('span','','media-spinner'),label=element('p','Loading preview…','small muted');
+    status.setAttribute('role','status');status.setAttribute('aria-live','polite');spinner.setAttribute('aria-hidden','true');
+    const retry=action('↻ Refresh preview',()=>load());retry.hidden=true;
+    status.append(spinner,label,retry);card.prepend(status);preview.hidden=true;
+    let loading=false;
+    const valid=()=>current===generation && preview.isConnected;
+    const failed=()=>{if(!valid())return;loading=false;preview.hidden=true;status.hidden=false;spinner.hidden=true;label.textContent='Could not load this preview. Tap Refresh to try again.';retry.hidden=false;retry.disabled=false;};
+    const ready=()=>{if(!valid())return;loading=false;status.hidden=true;preview.hidden=false;retry.disabled=false;};
+    preview.onload=ready;preview.onloadeddata=()=>{ready();if(preview.tagName==='VIDEO')try{preview.currentTime=.1;}catch{}};preview.onerror=failed;
+    async function load(){
+      if(loading || !valid())return;loading=true;retry.disabled=true;retry.hidden=true;spinner.hidden=false;label.textContent='Loading preview…';status.hidden=false;preview.hidden=true;
+      try{await fetchPreview();}catch{failed();}
+    }
+    return load;
   }
   async function showQr(id,shared=false) {
     const pending=++qrGeneration;
