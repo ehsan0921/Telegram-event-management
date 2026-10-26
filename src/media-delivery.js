@@ -5,7 +5,11 @@ import {showsUploaders} from './permissions.js';
 export function mediaDeliveryState(data,id,eid){
   const preference=data.preferences[id] ||= {};
   preference.mediaDelivery ||= {};
-  return preference.mediaDelivery[eid] ||= {received:[],pending:{},follow:false};
+  if(!preference.mediaDelivery[eid]){
+    const follow=data.events[eid]?.kind==='photos';
+    preference.mediaDelivery[eid]={received:[],pending:{},follow,...(follow?{followToken:randomBytes(8).toString('hex')}:{})};
+  }
+  return preference.mediaDelivery[eid];
 }
 export function mediaDeliveryAllowed(bot,tracking){
   const e=bot.db.events[tracking.event],state=bot.db.preferences[tracking.user]?.mediaDelivery?.[tracking.event];
