@@ -43,6 +43,22 @@ test('viewer and contributor menus share layout while viewers never receive cont
   assert.equal(viewer.reply_markup.inline_keyboard[1][0].web_app.url,`https://example.test/app?gallery=${f.album.id}`);
   assert.ok(!JSON.stringify(viewer).includes(f.album.uploadToken));assert.ok(!JSON.stringify(viewer).includes('media-add:'));
   assert.ok(JSON.stringify(contributor).includes('media-add:'));assert.ok(JSON.stringify(contributor).includes(f.album.uploadToken));
+  assert.ok(JSON.stringify(viewer).includes('Follow: On'));assert.ok(JSON.stringify(contributor).includes('Follow: On'));
+});
+
+test('photo links follow by default, deliver new uploads and preserve saved Off on reopening either link',async t=>{
+  const f=fixture(t);
+  const open=(update_id,prefix,token)=>processUpdate(f.env,{update_id,message:{chat:{id:2,type:'private'},from:{id:2,first_name:'Fictional viewer'},text:`/start ${prefix}_${token}`}});
+  await open(900,'p',f.album.viewToken);
+  assert.equal(f.state(2).follow,true);assert.ok(f.state(2).followToken);
+  await f.upload();await drainOutbox(f.env);
+  assert.equal(f.sent.filter(row=>row.method==='sendPhoto' && row.chat_id===2).length,1);
+  await f.cb(2,'media-follow','off');
+  for(const [index,prefix,token] of [[901,'p',f.album.viewToken],[902,'u',f.album.uploadToken]]){
+    await open(index,prefix,token);assert.equal(f.state(2).follow,false);
+  }
+  await f.upload();await drainOutbox(f.env);
+  assert.equal(f.sent.filter(row=>row.method==='sendPhoto' && row.chat_id===2).length,1);
 });
 
 test('get new tracks successful deliveries only, deduplicates pending presses, and get all can resend',async t=>{
