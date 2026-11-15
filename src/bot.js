@@ -1,3 +1,4 @@
+import {startProgress,parseProgressText,progressTextAction} from './media-progress-core.js';
 import {albumMain,albumMenuCallback} from './album-menu.js';
 import {paymentMethod,paidEvent} from './event-payment.js';
 import {qrPhoto} from './telegram-upload.js';
@@ -44,6 +45,7 @@ export class Bot {
   async long(id, text, markup) {
     for (let i = 0; i < text.length; i += 3900) await this.send(id, text.slice(i, i + 3900), i + 3900 >= text.length ? markup : undefined);
   }
+  idleKeyboard(id){return this.db.sessions[id]?this.inputKeyboard(this.db.sessions[id]):homeKeyboard();}
   inputKeyboard(s) {
     if (this.appUrl && (s.step === 'when' || (s.step === 'edit' && s.field === 'when'))) return reply([menu.picker], [menu.cancel]);
     if (s.step === 'phone') return reply([{ text: '📱 Share my phone number', request_contact: true }], [menu.skip, menu.cancel]);
@@ -336,6 +338,7 @@ export class Bot {
     const id = m.from.id;
     if (m.chat.type !== 'private') return this.send(m.chat.id, `Please use me in a private chat: https://t.me/${this.username}`);
     let text = clean(m.text, 3000);
+    const progressCommand=parseProgressText(text);if(progressCommand)return progressTextAction(this,id,progressCommand);
     if(text === '/start payments')text='/paysupport';
     if(text === '/start app')text='/app';
     const manageLink=text.match(/^\/start(?:@\w+)? manage_([a-f0-9]{16})$/);
@@ -642,8 +645,7 @@ export class Bot {
         if(!unknown.length)return refreshMedia(this,id);
         if(arg!=='confirm')return this.send(id,`Delivery of ${unknown.length} files is unconfirmed. Check your chat first. Retrying may send copies of files that already arrived.`,keyboard([button('Retry unconfirmed files',`media-retry:${e.id}:confirm`),button('Keep waiting',`v:${e.id}`)]));
         for(const mid of unknown){delete state.pending[mid];delete state.uncertain[mid];if(state.uncertainReason)delete state.uncertainReason[mid];if(state.cancelled)delete state.cancelled[mid];}
-        const queued=await queueMediaFiles(this,id,e,e.media.filter(file=>unknown.includes(file.id)));
-        return this.send(id,`${queued} files queued for an explicitly requested retry.`);
+        const files=e.media.filter(file=>unknown.includes(file.id));const queued=await queueMediaFiles(this,id,e,files);if(this.durableMediaDelivery){startProgress(this,id,e,files);return;}await this.send(id,`${queued} files processed.`);return this.mediaCard(id,e);
       }
       if(action==='media-follow'){
         if(!['on','off'].includes(arg))return this.mediaCard(id,e);
@@ -652,8 +654,7 @@ export class Bot {
       }else{
         if(!['all','new'].includes(arg))return this.mediaCard(id,e);
         const received=new Set(state.received),files=e.media.filter(file=>arg==='all' || !received.has(file.id));
-        const queued=await queueMediaFiles(this,id,e,files);
-        await this.send(id,queued?`${queued} files queued for your Telegram chat.`:Object.keys(state.uncertain || {}).length?'Some deliveries are unconfirmed. Check your chat, then use Review unconfirmed deliveries if you want to retry.':files.length?'Your media is already queued. Please wait for delivery.':'No new media to send.',queued?keyboard([button('Cancel delivery',`media-cancel:${e.id}:${state.deliveryGeneration || 0}`)]):undefined);
+        const queued=await queueMediaFiles(this,id,e,files);if(this.durableMediaDelivery){startProgress(this,id,e,files);return;}await this.send(id,`${queued} files processed.`);return this.mediaCard(id,e);
       }
       return this.mediaCard(id,e);
     }

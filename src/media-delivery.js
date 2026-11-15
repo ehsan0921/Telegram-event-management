@@ -1,3 +1,4 @@
+import {markProgress,ownedProgress} from './media-progress-core.js';
 import {randomBytes} from 'node:crypto';
 import {mediaMethods,mediaPayload} from './media-preview.js';
 import {showsUploaders} from './permissions.js';
@@ -20,6 +21,7 @@ export function mediaDeliveryAllowed(bot,tracking){
 export function mediaDeliveryResult(data,tracking,success){
   const state=data.preferences[tracking.user]?.mediaDelivery?.[tracking.event];
   if(state?.pending?.[tracking.media]!==tracking.token)return;
+  markProgress(data,tracking,success?'sent':state.cancelled?.[tracking.media]===tracking.token?'cancelled':'failed');
   state.results ||= {};state.results[tracking.media]={token:tracking.token,status:success?'sent':state.cancelled?.[tracking.media]===tracking.token?'cancelled':'failed'};
   delete state.pending[tracking.media];
   if(state.cancelled?.[tracking.media]===tracking.token)delete state.cancelled[tracking.media];
@@ -91,7 +93,7 @@ export async function refreshMedia(bot,id){
     const stopped=Object.entries(state.cancelled || {}).filter(([mid,token])=>state.pending[mid]===token && state.uncertain?.[mid]!==token).length;
     stopping+=stopped;uncertain+=unknown;pending+=Math.max(0,Object.keys(state.pending).length-unknown-stopped);
     const active=Object.entries(state.pending).filter(([mid,token])=>state.uncertain?.[mid]!==token && state.cancelled?.[mid]!==token).length;
-    if(active)rows.push([{text:'Cancel delivery',callback_data:`media-cancel:${eid}:${state.deliveryGeneration || 0}`}]);
+
     if(unknown)rows.push([{text:`Review unconfirmed: ${e.title}`,callback_data:`media-retry:${eid}:review`}]);
   }
   return bot.send(id,`Media delivery: ${received} files confirmed, ${pending} queued, ${stopping} stopping, ${uncertain} unconfirmed. Refresh does not request or resend files.${uncertain?' Check your chat before choosing a retry; unconfirmed files may already be there.':''}`,{inline_keyboard:rows});
@@ -102,7 +104,7 @@ export function cancelMedia(bot,id,e,generation){
   const state=mediaDeliveryState(bot.db,id,e.id);
   if(String(state.deliveryGeneration || 0)!==generation)return refreshMedia(bot,id);
   state.cancelled ||= {};
-  for(const [mid,token] of Object.entries(state.pending))if(state.uncertain?.[mid]!==token)state.cancelled[mid]=token;
+  for(const [mid,token] of Object.entries(state.pending))if(state.uncertain?.[mid]!==token && !ownedProgress(bot.db,{user:id,event:e.id,media:mid,token}))state.cancelled[mid]=token;
   return bot.send(id,'Cancellation requested for your remaining delivery from this album. Files already sent stay in your chat. A request already in progress may still arrive. Use /refresh, then Get new to receive the remaining files once stopping has settled.');
 }
 

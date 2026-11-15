@@ -296,3 +296,10 @@ test('atomic settings guard compares exact text bytes and requires an initialize
     assert.equal(db.prepare('SELECT hex(CAST(value AS BLOB)) AS bytes FROM app_settings WHERE key=?').get(developmentSettings[0].key).bytes, '610062');
   } finally { db.close(); }
 });
+
+test('snapshot clears delivery keyboard IDs and pending coordination but preserves received and Follow',()=>{
+  const pref={mediaKeyboard:{event:'example',job:'old',number:1},mediaDelivery:{example:{follow:true,received:['fictional'],jobs:{old:{notice:{messageId:77}}},pending:{file:'token'},uncertain:{file:'token'},cancelled:{file:'token'}}}};
+  const sourceSql=source("INSERT INTO records VALUES('preferences','fixture','"+JSON.stringify(pref)+"'); INSERT INTO records VALUES('media_ui_lease','fixture','{}');");
+  const db=restore(prepareSnapshot(options({sourceSql})).sql);
+  try{assert.deepEqual(JSON.parse(db.prepare("SELECT data FROM records WHERE kind='preferences'").get().data),{mediaDelivery:{example:{follow:true,received:['fictional']}}});assert.equal(db.prepare("SELECT count(*) AS n FROM records WHERE kind='media_ui_lease'").get().n,0);}finally{db.close();}
+});

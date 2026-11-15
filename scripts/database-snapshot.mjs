@@ -176,9 +176,17 @@ export function prepareSnapshot({ sourceSql, developmentSchema, developmentSetti
     // Cleanup must not run production audit/business triggers in the private staging DB.
     for (const trigger of objects.filter(row => row.type === 'trigger')) db.exec(`DROP TRIGGER ${identifier(trigger.name)}`);
     const removedSessions = Number(rows(db, "SELECT count(*) AS n FROM records WHERE kind='sessions'")[0].n);
-    db.exec("DELETE FROM records WHERE kind IN ('sessions','upload_pending','upload_finish')");
+    db.exec("DELETE FROM records WHERE kind IN ('sessions','upload_pending','upload_finish','media_ui_lease')");
     // Telegram message IDs and undo state belong to the sending bot only.
     db.exec("UPDATE records SET data=json_remove(data,'$.broadcasts') WHERE kind='preferences' AND json_type(data,'$.broadcasts') IS NOT NULL");
+    // Delivery control message IDs, leases and queue tokens belong to the source bot.
+    const preferences=db.prepare("SELECT id,data FROM records WHERE kind='preferences'").all();
+    for(const row of preferences){
+      const pref=JSON.parse(row.data);let changed=false;
+      if(pref.mediaKeyboard){delete pref.mediaKeyboard;changed=true;}
+      for(const state of Object.values(pref.mediaDelivery || {}))for(const key of ['jobs','pending','uncertain','uncertainReason','cancelled'])if(key in state){delete state[key];changed=true;}
+      if(changed)db.prepare("UPDATE records SET data=? WHERE kind='preferences' AND id=?").run(JSON.stringify(pref),row.id);
+    }
     for (const table of runtimeTables) db.exec(`DELETE FROM ${identifier(table)}`);
     db.exec('DELETE FROM app_settings');
     const set = db.prepare('INSERT INTO app_settings(key,value) VALUES (?,?)');

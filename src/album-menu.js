@@ -13,7 +13,6 @@ export function albumMain(bot,id,e){
     [button('➕ Add media',`media-add:${e.id}`),button('🔗 Share',`album-share:${e.id}`)],
     [button(`${state.follow?'🔔':'🔕'} Follow:${state.follow?'ON':'OFF'}`,`media-follow:${e.id}:${state.follow?'off':'on'}`),button('⋯ More',`album-more:${e.id}`)]
   ];
-  if(Object.entries(state.pending).some(([mid,token])=>state.cancelled?.[mid]!==token && state.uncertain?.[mid]!==token))rows.push([button('Cancel delivery',`media-cancel:${e.id}:${state.deliveryGeneration || 0}`)]);
   if(e.kind!=='photos' && e.banner)return bot.api('sendPhoto',{chat_id:id,photo:e.banner,caption:e.title,reply_markup:keyboard(rows)});
   return bot.send(id,e.title,keyboard(rows));
 }

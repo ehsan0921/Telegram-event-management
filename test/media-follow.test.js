@@ -1,3 +1,4 @@
+import {progressStats,progressKeyboard} from '../src/media-progress-core.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -123,13 +124,13 @@ test('follow sends new uploads with notification, stops before delivery when swi
 });
 
 function batchFixture(t,types){
-  const f=fixture(t);f.mode='success';f.requests=[];
+  const f=fixture(t);f.mode='success';f.requests=[];f.ui=[];f.uiId=10000;
   f.album.media=types.map((type,index)=>({id:(index+1).toString(16).padStart(12,'0'),type,fileId:'fictional-'+index,name:'Fictional uploader',by:1}));
   f.save('events',f.album.id,f.album);
   t.mock.method(globalThis,'fetch',async(url,options)=>{
     const method=new URL(url).pathname.split('/').at(-1),params=JSON.parse(options.body);
     assert.ok(!Object.keys(params).some(key=>key.startsWith('__')));
-    if(!['sendMediaGroup','sendPhoto','sendVideo','sendDocument','sendVoice'].includes(method))return Response.json({ok:true,result:{message_id:9000}});
+    if(!['sendMediaGroup','sendPhoto','sendVideo','sendDocument','sendVoice'].includes(method)){f.ui.push({method,params});return Response.json({ok:true,result:{message_id:params.message_id || ++f.uiId,chat:{id:params.chat_id}}});}
     f.requests.push({method,params});
     if(f.mode==='timeout')throw Error('Fictional timeout');
     if(f.mode==='429')return Response.json({ok:false,error_code:429,parameters:{retry_after:7}});
@@ -137,6 +138,8 @@ function batchFixture(t,types){
     const messages=(params.media || [params]).map((_,index)=>({message_id:f.requests.length*100+index+1,chat:{id:params.chat_id}}));
     return Response.json({ok:true,result:f.mode==='partial'?messages.slice(1):method==='sendMediaGroup'?messages:messages[0]});
   });
+  let textId=100000;
+  f.pressCancel=(id=2,number=f.read('preferences',id).mediaKeyboard?.number)=>processUpdate(f.env,{update_id:textId++,message:{chat:{id,type:'private'},from:{id},text:`✖ Cancel #${number}`}});
   return f;
 }
 
@@ -253,17 +256,17 @@ test('Cancel during an in-flight album preserves its receipt, stops later batche
   t.mock.method(globalThis,'fetch',async(...args)=>{if(once && args[0].endsWith('/sendMediaGroup')){once=false;enter();await gate;}return originalFetch(...args);});
   const sending=drainOutbox(f.env);await entered;
   const generation=f.state(2).deliveryGeneration;
-  await f.cb(2,'media-cancel',String(generation));release();await sending;
+  await f.pressCancel(2);release();await sending;
   assert.equal(f.requests.length,1);assert.equal(f.state(2).received.length,10);assert.equal(Object.keys(f.state(2).pending).length,0);
   await f.cb(2,'media-get','new');await drainOutbox(f.env);
   const files=f.requests.flatMap(r=>r.params.media?r.params.media.map(x=>x.media):[r.params.photo]);assert.equal(files.length,21);assert.equal(new Set(files).size,21);assert.equal(f.state(2).received.length,21);
 });
 test('Cancel is scoped to one recipient and stale Cancel buttons cannot stop a later delivery',async t=>{
   const f=batchFixture(t,['photo','photo']);await f.cb(2,'media-get','all');await f.cb(3,'media-get','all');
-  const old=f.state(2).deliveryGeneration;await f.cb(2,'media-cancel',String(old));await drainOutbox(f.env);
+  const old=f.read('preferences',2).mediaKeyboard.number;await f.pressCancel(2,old);await drainOutbox(f.env);
   assert.equal(f.state(2).received.length,0);assert.equal(f.state(3).received.length,2);
-  await f.cb(2,'media-get','new');assert.notEqual(f.state(2).deliveryGeneration,old);
-  await f.cb(2,'media-cancel',String(old));await drainOutbox(f.env);assert.equal(f.state(2).received.length,2);
+  await f.cb(2,'media-get','new');assert.notEqual(f.read('preferences',2).mediaKeyboard.number,old);
+  await f.pressCancel(2,old);await drainOutbox(f.env);assert.equal(f.state(2).received.length,2);
 });
 
 test('event Follow is opt-in and follows new media without changing event RSVP or invitation data',async t=>{
@@ -273,14 +276,14 @@ test('event Follow is opt-in and follows new media without changing event RSVP o
   assert.equal(f.sent.filter(r=>r.method==='sendPhoto' && r.chat_id===2).length,1);
   assert.deepEqual(f.read('events',f.album.id).guests,f.album.guests);
 });
-test('event-media cancellation does not stop the same user receiving a standalone album',async t=>{
+test('stale event-delivery Cancel cannot cancel the current standalone-album delivery',async t=>{
   const f=batchFixture(t,['photo','photo']);delete f.album.kind;f.album.guests={2:{name:'Guest',status:'yes'}};f.save('events',f.album.id,f.album);
   const other=photoCollection('Fictional other album',1);other.media=f.album.media.map((file,index)=>({...file,id:'f'.repeat(11)+index,fileId:'fictional-other-'+index}));f.save('events',other.id,other);
   const pref=f.read('preferences',2);pref.mediaAccess[other.id]=other.viewToken;f.save('preferences',2,pref);
   await f.cb(2,'media-get','all');await processUpdate(f.env,{update_id:8000,callback_query:{id:'fictional-other',from:{id:2},data:`media-get:${other.id}:all`}});
-  await f.cb(2,'media-cancel',String(f.state(2).deliveryGeneration));await drainOutbox(f.env);
-  assert.equal(f.state(2).received.length,0);assert.equal(f.read('preferences',2).mediaDelivery[other.id].received.length,2);
-  assert.deepEqual(f.requests.flatMap(r=>r.params.media?.map(x=>x.media) || []),['fictional-other-0','fictional-other-1']);
+  await f.pressCancel(2,1);await drainOutbox(f.env);
+  assert.equal(f.state(2).received.length,2);assert.equal(f.read('preferences',2).mediaDelivery[other.id].received.length,2);
+  assert.deepEqual(f.requests.flatMap(r=>r.params.media?.map(x=>x.media) || []),['fictional-0','fictional-1','fictional-other-0','fictional-other-1']);
 });
 
 test('Send status uses the actual request receipt, not historical received media',async t=>{
@@ -312,4 +315,71 @@ test('rejected delivery-status requests do not log private event/file IDs or req
   const response=await worker.fetch(new Request(`https://example.test/api/events/${f.album.id}/media/111111111111/delivery-status?request=aaaaaaaaaaaaaaaa`),f.env,{waitUntil(){}});
   assert.equal(response.status,401);assert.equal(logs.length,1);
   assert.ok(!logs[0].includes(f.album.id));assert.ok(!logs[0].includes('111111111111'));assert.ok(!logs[0].includes('aaaaaaaaaaaaaaaa'));assert.match(logs[0],/delivery-status/);
+});
+
+for(const size of [0,1,10,11,200])test('reply delivery keyboard counts confirmed receipts for '+size+' files',async t=>{
+  const f=batchFixture(t,Array(size).fill('photo'));
+  await f.cb(2,'media-get','all');
+  const first=f.ui.find(r=>r.params.reply_markup?.keyboard);
+  assert.ok(first);assert.equal(first.method,'sendMessage');assert.equal(first.params.reply_markup.inline_keyboard,undefined);
+  assert.match(first.params.reply_markup.keyboard[0][0].text,new RegExp('0/'+size+' sent'));
+  assert.match(first.params.reply_markup.keyboard[1][0].text,/Cancel #1/);
+  assert.equal(f.requests.length,0);
+  const job=()=>Object.values(f.state(2).jobs)[0];
+  assert.equal(job().notice.keyboardConfirmed,true);
+  await drainOutbox(f.env);
+  assert.equal(progressStats(job()).sent,size);assert.equal(progressStats(job()).remaining,0);
+  assert.equal(f.requests.length,Math.ceil(size/10));
+  assert.equal(f.read('preferences',2).mediaKeyboard,undefined);
+  assert.ok(f.ui.some(r=>r.params.reply_markup?.keyboard && !JSON.stringify(r.params.reply_markup).includes('Cancel #')));
+  assert.equal(f.ui.some(r=>['editMessageText','editMessageReplyMarkup'].includes(r.method)),false);
+});
+
+test('reply keyboard bypasses a busy media lease; Cancel stops queued media without changing other users',async t=>{
+  const f=batchFixture(t,Array(11).fill('photo'));
+  f.db.prepare('INSERT INTO delivery_lease VALUES (1,?,unixepoch()+60)').run('fictional-busy');
+  await f.cb(2,'media-get','all');
+  assert.ok(f.ui.some(r=>r.params.reply_markup?.keyboard));assert.equal(f.requests.length,0);
+  await f.cb(3,'media-get','all');
+  await f.pressCancel(2);
+  assert.ok(f.ui.some(r=>r.params.chat_id===2 && /Cancellation requested/.test(r.params.text || '')));
+  assert.equal(f.requests.length,0);
+  f.db.exec('DELETE FROM delivery_lease');await drainOutbox(f.env);
+  assert.equal(f.state(2).received.length,0);assert.equal(f.state(3).received.length,11);
+  assert.ok(f.requests.every(r=>r.params.chat_id===3));
+});
+
+test('initial control 429 gates media until the keyboard is acknowledged',async t=>{
+  const f=batchFixture(t,['photo']);const real=globalThis.fetch;let rejected=false;
+  t.mock.method(globalThis,'fetch',async(url,options)=>{
+    const params=JSON.parse(options.body);
+    if(!rejected && params.reply_markup?.keyboard){rejected=true;return Response.json({ok:false,error_code:429,parameters:{retry_after:30}});}
+    return real(url,options);
+  });
+  await f.cb(2,'media-get','all');
+  assert.equal(Object.values(f.state(2).jobs)[0].notice.keyboardConfirmed,undefined);
+  // Avoid a real wait: test the media drain with the control deliberately still delayed.
+  await drainOutbox(f.env);assert.equal(f.requests.length,0);
+  f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);
+  assert.equal(f.requests.length,1);assert.equal(f.state(2).received.length,1);
+});
+
+for(const mode of ['400','partial','timeout','429'])test('reply progress does not count '+mode+' as confirmed sent',async t=>{
+  const f=batchFixture(t,['photo','photo']);await f.cb(2,'media-get','all');f.mode=mode;
+  await drainOutbox(f.env);const job=Object.values(f.state(2).jobs)[0],stats=progressStats(job);
+  assert.equal(stats.sent,0);assert.equal(stats.remaining,2);assert.match(progressKeyboard(job).keyboard[0][0].text,/0\/2 sent/);
+  if(mode==='400')assert.equal(stats.failed,2);
+  if(mode==='partial')assert.equal(stats.partial,2);
+  if(mode==='timeout')assert.equal(stats.unknown,2);
+  if(mode==='429')assert.equal(stats.queued,2);
+});
+
+test('an ambiguous progress control never replays confirmed media receipts',async t=>{
+  const f=batchFixture(t,['photo']);await f.cb(2,'media-get','all');
+  const real=globalThis.fetch;
+  t.mock.method(globalThis,'fetch',async(url,options)=>url.endsWith('/sendMessage') && JSON.parse(options.body).reply_markup?.keyboard?Response.json({ok:false,error_code:503}):real(url,options));
+  const button=progressKeyboard(Object.values(f.state(2).jobs)[0]).keyboard[0][0].text;
+  await processUpdate(f.env,{update_id:900003,message:{chat:{id:2,type:'private'},from:{id:2},text:button}});
+  await drainOutbox(f.env);f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);
+  assert.equal(f.requests.length,1);assert.equal(f.state(2).received.length,1);
 });
