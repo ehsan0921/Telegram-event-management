@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import {photoCollection} from '../src/permissions.js';
-import {processUpdate,drainOutbox} from '../src/worker.js';
+import worker,{processUpdate,drainOutbox} from '../src/worker.js';
 import {mediaApi} from '../src/media-api.js';
 
 function fixture(t){
@@ -305,4 +305,11 @@ test('delivery status is isolated by user, current file access and request refer
   assert.equal((await (await mediaApi(new Request(path),f.env,{id:1})).json()).status,'unconfirmed');
   assert.equal((await mediaApi(new Request(path),f.env,{id:4})).status,403);
   f.save('preferences',2,{mediaAccess:{}});assert.equal((await mediaApi(new Request(path),f.env,{id:2})).status,403);
+});
+
+test('rejected delivery-status requests do not log private event/file IDs or request references',async t=>{
+  const f=fixture(t),logs=[];t.mock.method(console,'log',line=>logs.push(String(line)));
+  const response=await worker.fetch(new Request(`https://example.test/api/events/${f.album.id}/media/111111111111/delivery-status?request=aaaaaaaaaaaaaaaa`),f.env,{waitUntil(){}});
+  assert.equal(response.status,401);assert.equal(logs.length,1);
+  assert.ok(!logs[0].includes(f.album.id));assert.ok(!logs[0].includes('111111111111'));assert.ok(!logs[0].includes('aaaaaaaaaaaaaaaa'));assert.match(logs[0],/delivery-status/);
 });

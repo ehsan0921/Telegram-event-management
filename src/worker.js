@@ -182,12 +182,13 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname.startsWith('/api/')) {
+      const logPath=url.pathname.replace(/\/[a-f0-9]{12,64}(?=\/|$)/g,'/:id');
       try {
       const response = await miniApi(request, env);
-      if (!response.ok) console.log(JSON.stringify({event:'mini_api_rejected',path:url.pathname,status:response.status}));
+      if (!response.ok) console.log(JSON.stringify({event:'mini_api_rejected',path:logPath,status:response.status}));
       if (response.ok && request.method === 'POST' && !url.pathname.endsWith('/messages/history')) ctx.waitUntil(drainOutbox(env,/\/messages\/(send|undo|delete)$/.test(url.pathname)));
       return response;
-      } catch (error) { const reference=crypto.randomUUID();console.error(JSON.stringify({event:'mini_api_failed',reference,path:url.pathname,type:error.name})); return Response.json({ error: 'Could not load the planner. Please try again.',reference }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
+      } catch (error) { const reference=crypto.randomUUID();console.error(JSON.stringify({event:'mini_api_failed',reference,path:logPath,type:error.name})); return Response.json({ error: 'Could not load the planner. Please try again.',reference }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
     }
     if (request.method === 'GET' && (url.pathname === '/app' || url.pathname === '/app/' || ['/app.js', '/errors.js', '/gallery.js', '/event-actions.js', '/guest-messages.js', '/style.css'].includes(url.pathname))) {
       const target = new URL(request.url);
