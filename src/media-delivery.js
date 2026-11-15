@@ -20,9 +20,11 @@ export function mediaDeliveryAllowed(bot,tracking){
 export function mediaDeliveryResult(data,tracking,success){
   const state=data.preferences[tracking.user]?.mediaDelivery?.[tracking.event];
   if(state?.pending?.[tracking.media]!==tracking.token)return;
+  state.results ||= {};state.results[tracking.media]={token:tracking.token,status:success?'sent':state.cancelled?.[tracking.media]===tracking.token?'cancelled':'failed'};
   delete state.pending[tracking.media];
   if(state.cancelled?.[tracking.media]===tracking.token)delete state.cancelled[tracking.media];
   if(state.uncertain)delete state.uncertain[tracking.media];
+  if(state.uncertainReason)delete state.uncertainReason[tracking.media];
   if(success && !state.received.includes(tracking.media))state.received.push(tracking.media);
 }
 export function mediaDeliveryPayload(bot,tracking){
@@ -37,7 +39,7 @@ export async function queueMedia(bot,id,e,file,{follow=false}={}){
   if(state.pending[file.id])return false;
   if(!Object.keys(state.pending).length)state.deliveryGeneration=(state.deliveryGeneration || 0)+1;
   const tracking={event:e.id,media:file.id,user:id,token:randomBytes(8).toString('hex'),grant:bot.db.preferences[id]?.mediaAccess?.[e.id] || `owner:${e.owner}`,...(follow?{follow:state.followToken}:{})};
-  state.pending[file.id]=tracking.token;
+  state.pending[file.id]=tracking.token;state.results ||= {};state.results[file.id]={token:tracking.token,status:'queued'};
   try{
     await bot.api(mediaMethods[file.type],{...mediaDeliveryPayload(bot,tracking),__mediaDelivery:tracking});
     if(!bot.durableMediaDelivery)mediaDeliveryResult(bot.db,tracking,true);
@@ -45,7 +47,7 @@ export async function queueMedia(bot,id,e,file,{follow=false}={}){
   return true;
 }
 export async function notifyMediaFollowers(bot,e,file){
-  if(e.kind!=='photos')return;
+
   for(const [uid,preference] of Object.entries(bot.db.preferences)){
     const id=Number(uid),state=preference.mediaDelivery?.[e.id];
     if(!Number.isSafeInteger(id) || id===file.by || !state?.follow || state.received.includes(file.id))continue;
@@ -102,4 +104,14 @@ export function cancelMedia(bot,id,e,generation){
   state.cancelled ||= {};
   for(const [mid,token] of Object.entries(state.pending))if(state.uncertain?.[mid]!==token)state.cancelled[mid]=token;
   return bot.send(id,'Cancellation requested for your remaining delivery from this album. Files already sent stay in your chat. A request already in progress may still arrive. Use /refresh, then Get new to receive the remaining files once stopping has settled.');
+}
+
+export function deliveryStatus(state,media,request){
+  if(state?.pending?.[media]===request){
+    if(state.uncertain?.[media]===request)return state.uncertainReason?.[media]==='partial'?'partial':'unconfirmed';
+    if(state.cancelled?.[media]===request)return 'stopping';
+    return 'queued';
+  }
+  const result=state?.results?.[media];
+  return result?.token===request && ['sent','failed','cancelled'].includes(result.status)?result.status:'unconfirmed';
 }

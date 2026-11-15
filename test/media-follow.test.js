@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import {photoCollection} from '../src/permissions.js';
-import {processUpdate,drainOutbox} from '../src/worker.js';
+import worker,{processUpdate,drainOutbox} from '../src/worker.js';
 import {mediaApi} from '../src/media-api.js';
 
 function fixture(t){
@@ -40,7 +40,7 @@ test('viewer and contributor menus share layout while viewers never receive cont
   await f.cb(2,'v');await f.cb(3,'v');
   const menus=f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage' ORDER BY rowid").all().map(row=>JSON.parse(row.params));
   const viewer=menus[0],contributor=menus[1];
-  assert.deepEqual(viewer.reply_markup.inline_keyboard[1].map(b=>b.text),['Get all (1)','Get new (1)']);
+  assert.deepEqual(viewer.reply_markup.inline_keyboard[1].map(b=>b.text),['📥 Get all (1)','🆕 Get new (1)']);
   assert.equal(viewer.reply_markup.inline_keyboard[0][0].web_app.url,`https://example.test/app?gallery=${f.album.id}`);
   assert.ok(!JSON.stringify(viewer).includes(f.album.uploadToken));assert.ok(JSON.stringify(viewer).includes('media-add:'));
   assert.ok(JSON.stringify(contributor).includes('media-add:'));assert.ok(!JSON.stringify(contributor).includes(f.album.uploadToken));
@@ -90,9 +90,9 @@ test('failed Telegram media remains new and revoked access cancels queued delive
 test('Mini App sends report durable queue state, reuse existing file IDs and recheck revocation before delivery',async t=>{
   const f=fixture(t),path=`https://fictional.test/api/events/${f.album.id}/media/111111111111/send`;
   const first=await mediaApi(new Request(path,{method:'POST'}),f.env,{id:2});
-  assert.deepEqual(await first.json(),{queued:true,alreadyQueued:false});
+  const initial=await first.json();assert.equal(initial.queued,true);assert.equal(initial.alreadyQueued,false);assert.equal(initial.status,'queued');assert.match(initial.request,/^[a-f0-9]{16}$/);
   const again=await mediaApi(new Request(path,{method:'POST'}),f.env,{id:2});
-  assert.deepEqual(await again.json(),{queued:true,alreadyQueued:true});
+  const repeated=await again.json();assert.equal(repeated.queued,true);assert.equal(repeated.alreadyQueued,true);assert.equal(repeated.request,initial.request);
   assert.equal(f.sent.length,0);await drainOutbox(f.env);
   assert.equal(f.sent.length,1);assert.equal(f.sent[0].photo,'fictional-photo');
   await mediaApi(new Request(path,{method:'POST'}),f.env,{id:2});
@@ -226,7 +226,7 @@ test('an unconfirmed single send is blocked at the Mini App API until explicit r
   const path=`https://fictional.test/api/events/${f.album.id}/media/${f.album.media[0].id}/send`;
   await mediaApi(new Request(path,{method:'POST'}),f.env,{id:2});await drainOutbox(f.env);
   const response=await mediaApi(new Request(path,{method:'POST'}),f.env,{id:2});
-  assert.equal(response.status,409);assert.match((await response.json()).error,/unconfirmed/);
+  assert.equal(response.status,200);assert.equal((await response.json()).status,'unconfirmed');
   assert.equal(f.requests.length,1);
 });
 
@@ -264,4 +264,52 @@ test('Cancel is scoped to one recipient and stale Cancel buttons cannot stop a l
   assert.equal(f.state(2).received.length,0);assert.equal(f.state(3).received.length,2);
   await f.cb(2,'media-get','new');assert.notEqual(f.state(2).deliveryGeneration,old);
   await f.cb(2,'media-cancel',String(old));await drainOutbox(f.env);assert.equal(f.state(2).received.length,2);
+});
+
+test('event Follow is opt-in and follows new media without changing event RSVP or invitation data',async t=>{
+  const f=fixture(t);delete f.album.kind;f.album.guests={2:{name:'Guest',status:'yes'},3:{name:'Uploader',status:'yes'}};f.save('events',f.album.id,f.album);
+  await f.cb(2,'m','0');assert.equal(f.state(2).follow,false);await f.upload();assert.deepEqual(f.state(2).pending,{});
+  await f.cb(2,'media-follow','on');await f.upload();await drainOutbox(f.env);
+  assert.equal(f.sent.filter(r=>r.method==='sendPhoto' && r.chat_id===2).length,1);
+  assert.deepEqual(f.read('events',f.album.id).guests,f.album.guests);
+});
+test('event-media cancellation does not stop the same user receiving a standalone album',async t=>{
+  const f=batchFixture(t,['photo','photo']);delete f.album.kind;f.album.guests={2:{name:'Guest',status:'yes'}};f.save('events',f.album.id,f.album);
+  const other=photoCollection('Fictional other album',1);other.media=f.album.media.map((file,index)=>({...file,id:'f'.repeat(11)+index,fileId:'fictional-other-'+index}));f.save('events',other.id,other);
+  const pref=f.read('preferences',2);pref.mediaAccess[other.id]=other.viewToken;f.save('preferences',2,pref);
+  await f.cb(2,'media-get','all');await processUpdate(f.env,{update_id:8000,callback_query:{id:'fictional-other',from:{id:2},data:`media-get:${other.id}:all`}});
+  await f.cb(2,'media-cancel',String(f.state(2).deliveryGeneration));await drainOutbox(f.env);
+  assert.equal(f.state(2).received.length,0);assert.equal(f.read('preferences',2).mediaDelivery[other.id].received.length,2);
+  assert.deepEqual(f.requests.flatMap(r=>r.params.media?.map(x=>x.media) || []),['fictional-other-0','fictional-other-1']);
+});
+
+test('Send status uses the actual request receipt, not historical received media',async t=>{
+  const f=batchFixture(t,['photo']),file=f.album.media[0],path=`https://example.test/api/events/${f.album.id}/media/${file.id}`;
+  const send=()=>mediaApi(new Request(path+'/send',{method:'POST'}),f.env,{id:2});
+  const status=reference=>mediaApi(new Request(path+'/delivery-status?request='+reference),f.env,{id:2}).then(r=>r.json());
+  const first=await (await send()).json();assert.equal(first.status,'queued');assert.match(first.request,/^[a-f0-9]{16}$/);assert.equal((await status(first.request)).status,'queued');
+  await drainOutbox(f.env);assert.equal((await status(first.request)).status,'sent');
+  const next=await (await send()).json();assert.notEqual(next.request,first.request);assert.equal((await status(next.request)).status,'queued');assert.ok(f.state(2).received.includes(file.id));
+  await drainOutbox(f.env);assert.equal((await status(next.request)).status,'sent');
+});
+for(const [mode,expected] of [['400','failed'],['timeout','unconfirmed'],['partial','partial']])test(`${mode} delivery never becomes a false sent notice`,async t=>{
+  const f=batchFixture(t,['photo','photo']);f.mode=mode;await f.cb(2,'media-get','all');
+  const file=f.album.media[0],reference=f.state(2).pending[file.id];await drainOutbox(f.env);
+  const response=await mediaApi(new Request(`https://example.test/api/events/${f.album.id}/media/${file.id}/delivery-status?request=${reference}`),f.env,{id:2});
+  assert.equal((await response.json()).status,expected);
+});
+test('delivery status is isolated by user, current file access and request reference',async t=>{
+  const f=batchFixture(t,['photo']),file=f.album.media[0];
+  const sent=await (await mediaApi(new Request(`https://example.test/api/events/${f.album.id}/media/${file.id}/send`,{method:'POST'}),f.env,{id:2})).json();await drainOutbox(f.env);
+  const path=`https://example.test/api/events/${f.album.id}/media/${file.id}/delivery-status?request=${sent.request}`;
+  assert.equal((await (await mediaApi(new Request(path),f.env,{id:1})).json()).status,'unconfirmed');
+  assert.equal((await mediaApi(new Request(path),f.env,{id:4})).status,403);
+  f.save('preferences',2,{mediaAccess:{}});assert.equal((await mediaApi(new Request(path),f.env,{id:2})).status,403);
+});
+
+test('rejected delivery-status requests do not log private event/file IDs or request references',async t=>{
+  const f=fixture(t),logs=[];t.mock.method(console,'log',line=>logs.push(String(line)));
+  const response=await worker.fetch(new Request(`https://example.test/api/events/${f.album.id}/media/111111111111/delivery-status?request=aaaaaaaaaaaaaaaa`),f.env,{waitUntil(){}});
+  assert.equal(response.status,401);assert.equal(logs.length,1);
+  assert.ok(!logs[0].includes(f.album.id));assert.ok(!logs[0].includes('111111111111'));assert.ok(!logs[0].includes('aaaaaaaaaaaaaaaa'));assert.match(logs[0],/delivery-status/);
 });

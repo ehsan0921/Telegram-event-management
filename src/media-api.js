@@ -4,12 +4,12 @@ import {mediaCan,mediaRole,photoLinks,showsUploaders,shareUploadLink} from './pe
 import { mutateState } from './worker-store.js';
 import {isManager} from './cohosts.js';
 import {invitationAvailable} from './invitations.js';
-import {queueMedia} from './media-delivery.js';
+import {queueMedia,deliveryStatus} from './media-delivery.js';
 
 
 export async function mediaApi(request, env, user) {
   const url = new URL(request.url);
-  const match = url.pathname.match(/^\/api\/events\/([a-f0-9]{16})\/(gallery|gallery-qr|upload-qr|media\/([a-f0-9]{12})(?:\/(send|thumbnail))?)$/);
+  const match = url.pathname.match(/^\/api\/events\/([a-f0-9]{16})\/(gallery|gallery-qr|upload-qr|media\/([a-f0-9]{12})(?:\/(send|thumbnail|delivery-status))?)$/);
   if (!match) return null;
   const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
   const json = (value, status = 200) => Response.json(value, { status, headers });
@@ -38,17 +38,25 @@ export async function mediaApi(request, env, user) {
   if (match[2] === 'gallery' && request.method === 'GET') return json({ id: e.id, title: e.title, galleryUrl, qrEnabled:e.qrEnabled!==false, cancelled: !!e.cancelled, canUpload: !e.cancelled && mediaCan(e, user.id, 'uploadMedia',pref), uploadUrl: `https://t.me/${env.BOT_USERNAME}?start=a_${e.id}`, media: (e.media || []).map(f => ({ id: f.id, type: f.type, previewKind:mediaPreview(f),hasThumbnail:!!f.thumbnail,filename: f.filename, caption: f.caption, name: showsUploaders(e)?f.name:null, at: f.at, size: f.size || null })) });
   const f = e.media?.find(item => item.id === match[3]);
   if (!f) return json({ error: 'This file is no longer in the event.' }, 404);
+  if(match[4]==='delivery-status' && request.method==='GET'){
+    const reference=url.searchParams.get('request');
+    if(!/^[a-f0-9]{16}$/.test(reference || ''))return json({error:'A valid delivery request reference is required.'},400);
+    return json({status:deliveryStatus(pref.mediaDelivery?.[e.id],f.id,reference)});
+  }
   if (match[4] === 'send' && request.method === 'POST') {
+    if(e.cancelled)return json({error:'This event is no longer available for media delivery.'},409);
     const queued=await mutateState(env, async (data, bot) => {
       const current = data.events[e.id];
       if (!bot.mediaAllowed(current, user.id) || !bot.mediaCan(current, user.id, 'viewMedia')) throw new Error('Access changed');
       const file = current.media.find(item => item.id === f.id); if (!file) throw new Error('File removed');
-      const state=bot.db.preferences[user.id]?.mediaDelivery?.[current.id];
-      if(state?.uncertain?.[file.id] && state.pending[file.id]===state.uncertain[file.id])return 'unconfirmed';
-      return queueMedia(bot,user.id,current,file);
+      let state=bot.db.preferences[user.id]?.mediaDelivery?.[current.id];
+      if(state?.uncertain?.[file.id] && state.pending[file.id]===state.uncertain[file.id])return {queued:false,alreadyQueued:true,request:state.pending[file.id],status:deliveryStatus(state,file.id,state.pending[file.id])};
+      const started=await queueMedia(bot,user.id,current,file);
+      state=bot.db.preferences[user.id]?.mediaDelivery?.[current.id];
+      const reference=state?.pending?.[file.id] || state?.results?.[file.id]?.token;
+      return {queued:true,alreadyQueued:!started,request:reference,status:deliveryStatus(state,file.id,reference)};
     });
-    if(queued==='unconfirmed')return json({error:'Previous delivery is unconfirmed. Check your Telegram chat and use /refresh in the bot to review an explicit retry.'},409);
-    return json({ queued: true, alreadyQueued: !queued });
+    return json(queued);
   }
   if (request.method !== 'GET' || (match[4] && match[4]!=='thumbnail')) return json({ error: 'Not found.' }, 404);
   const thumbnail=match[4]==='thumbnail';if(thumbnail && !f.thumbnail)return json({error:'No thumbnail.'},404);

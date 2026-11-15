@@ -169,7 +169,7 @@ test('previews show loading, recover from fetch and decode failures, and keep fi
   f.setFetch(async()=>{throw Error('Fictional fetch failure');});
   await f.observers[0].intersect();
   const refresh=f.button('↻ Refresh preview');assert.equal(refresh.hidden,false);assert.equal(refresh.disabled,false);
-  assert.ok(f.button('Download'));assert.ok(f.button('Send to Telegram'));
+  assert.equal(f.button('Download'),undefined);assert.ok(f.button('Send to Telegram'));
   f.setFetch(async()=>new Response(new Blob(['fictional image'],{type:'image/jpeg'})));
   await refresh.onclick();assert.equal(refresh.disabled,false);assert.equal(status.children[0].hidden,false);
   image.onerror();assert.equal(refresh.hidden,false);
@@ -203,22 +203,28 @@ test('Send to Telegram disables repeated presses and reports queueing rather tha
   assert.match(f.notices[0],/Queued/);assert.doesNotMatch(f.notices[0],/sent/);
 });
 
-test('mobile save uses feature-detected native file sharing and respects cancellation',async t=>{
-  const descriptor=Object.getOwnPropertyDescriptor(globalThis,'navigator');
-  t.after(()=>{if(descriptor)Object.defineProperty(globalThis,'navigator',descriptor);else delete globalThis.navigator;});
-  const shared=[];let cancel=false;
-  Object.defineProperty(globalThis,'navigator',{configurable:true,value:{canShare:({files})=>files[0] instanceof File,async share(value){shared.push(value);if(cancel)throw Object.assign(Error('Cancelled'),{name:'AbortError'});}}});
-  const f=galleryHarness(t,async()=>({title:'Fictional album',media:[{id:'fictional',type:'video',filename:'clip.mp4'}]}));
-  await f.openGallery('fictional');await f.button('Play video').onclick();
-  await f.$('media-save').onclick();assert.equal(shared.length,1);assert.equal(shared[0].files[0].name,'clip.mp4');
-  cancel=true;await f.$('media-save').onclick();assert.equal(shared.length,2);assert.equal(f.notices.length,0);
-});
 
-test('Download runs through the real shared action helper and starts an authenticated request',async t=>{
-  t.mock.method(globalThis,'setTimeout',()=>0);
-  const f=galleryHarness(t,async()=>({title:'Fictional album',media:[{id:'fictional',type:'document',filename:'example.pdf'}]}));
-  await f.openGallery('fictional');await f.button('Download').onclick();
-  assert.equal(f.fetches.length,1);
-  assert.equal(f.fetches[0][1].headers.Authorization,'tma fictional-init-data');
-  assert.equal(f.button('Download').disabled,false);
+
+
+
+test('Mini App has no Download/Save controls and sent appears once only after a confirmed receipt',async t=>{
+  const check=deferred(),file={id:'fictional',type:'document',filename:'example.pdf'};
+  const f=galleryHarness(t,path=>path.endsWith('/send')?Promise.resolve({queued:true,status:'queued',request:'a'.repeat(16)}):path.includes('/delivery-status?')?check.promise:Promise.resolve({title:'Fictional',media:[file]}));
+  await f.openGallery('fictional');assert.equal(f.button('Download'),undefined);
+  const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');assert.doesNotMatch(html,/id="(?:media-save|qr-download)"/);
+  const button=f.button('Send to Telegram'),sending=button.onclick();await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(!f.notices.includes('sent'));assert.equal(button.disabled,true);check.resolve({status:'sent'});await sending;
+  assert.equal(f.notices.filter(text=>text==='sent').length,1);assert.equal(f.calls.filter(([path])=>path.endsWith('/send')).length,1);
+});
+test('status polling is bounded, serial, read-only and never retries Send automatically',async t=>{
+  const delays=[];t.mock.method(globalThis,'setTimeout',(callback,ms)=>{delays.push(ms);queueMicrotask(callback);return 0;});
+  const f=galleryHarness(t,async path=>path.endsWith('/send')?{queued:true,status:'queued',request:'a'.repeat(16)}:path.includes('/delivery-status?')?{status:'queued'}:{title:'Fictional',media:[{id:'fictional',type:'document',filename:'example.pdf'}]});
+  await f.openGallery('fictional');await f.button('Send to Telegram').onclick();
+  assert.equal(f.calls.filter(([path])=>path.endsWith('/send')).length,1);assert.equal(f.calls.filter(([path])=>path.includes('/delivery-status?')).length,20);
+  assert.equal(delays.length,19);assert.ok(delays.every(ms=>ms===2000));assert.ok(!f.notices.includes('sent'));assert.match(f.notices.at(-1),/not confirmed/);
+});
+for(const status of ['partial','unconfirmed','failed','cancelled'])test(`Mini App reports ${status} without a sent notice or automatic resend`,async t=>{
+  const f=galleryHarness(t,async path=>path.endsWith('/send')?{status,request:'a'.repeat(16)}:{title:'Fictional',media:[{id:'fictional',type:'document',filename:'example.pdf'}]});
+  await f.openGallery('fictional');await f.button('Send to Telegram').onclick();
+  assert.ok(!f.notices.includes('sent'));assert.equal(f.calls.filter(([path])=>path.endsWith('/send')).length,1);assert.equal(f.calls.filter(([path])=>path.includes('/delivery-status?')).length,0);
 });

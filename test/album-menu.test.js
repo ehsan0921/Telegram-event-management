@@ -11,10 +11,10 @@ function fixture(){
 }
 test('album main menu uses the approved four readable rows and moves management into More',async()=>{
   const f=fixture();await f.cb(1,'v');
-  assert.deepEqual(f.last().reply_markup.inline_keyboard.map(row=>row.map(b=>b.text)),[['Open album app'],['Get all (0)','Get new (0)'],['Add media','Share'],['Follow:ON','More']]);
+  assert.deepEqual(f.last().reply_markup.inline_keyboard.map(row=>row.map(b=>b.text)),[['📂 Open album app'],['📥 Get all (0)','🆕 Get new (0)'],['➕ Add media','🔗 Share'],['🔔 Follow:ON','⋯ More']]);
   assert.ok(f.buttons().every(button=>button.text.length<24));
-  await f.cb(1,'album-more');assert.ok(f.buttons().some(b=>b.callback_data===`album-danger:${f.e.id}`));assert.ok(f.buttons().some(b=>b.text==='Main menu'));
-  await f.cb(2,'album-more');assert.ok(f.buttons().some(b=>b.text==='Leave album'));assert.ok(!f.buttons().some(b=>b.text==='Danger zone'));
+  await f.cb(1,'album-more');assert.ok(f.buttons().some(b=>b.callback_data===`album-danger:${f.e.id}`));assert.ok(f.buttons().some(b=>b.text==='🏠 Main menu'));
+  await f.cb(2,'album-more');assert.ok(f.buttons().some(b=>b.text==='🚪 Leave album'));assert.ok(!f.buttons().some(b=>b.text==='⚠️ Danger zone'));
 });
 test('Share defaults to contributor when permitted, persists OFF, and never changes existing album access or tokens',async()=>{
   const f=fixture(),before=JSON.stringify(f.e),links=photoLinks(f.e,'FictionalBot');
@@ -32,4 +32,26 @@ test('explicit upload restrictions and disabled sharing are preserved without si
   await f.cb(1,'album-share-set','on');assert.match(f.buttons()[0].text,/OFF$/);assert.equal(JSON.stringify(f.e),before);
   f.e.sharingDisabled=true;await f.cb(1,'album-share');assert.ok(!f.buttons().some(b=>b.copy_text));
   await f.cb(3,'album-share');assert.match(f.last().text,/unavailable/);assert.ok(!f.last().text.includes(f.e.title));
+});
+
+test('event media gains the album controls under the existing event ID while the event card remains separate',async()=>{
+  const f=fixture();delete f.e.kind;f.e.guests={2:{name:'Guest',status:'yes'}};
+  const before=JSON.stringify(f.e);
+  await f.cb(1,'m','0');assert.deepEqual(f.last().reply_markup.inline_keyboard.slice(0,4).map(row=>row.map(b=>b.text)),[['📂 Open album app'],['📥 Get all (0)','🆕 Get new (0)'],['➕ Add media','🔗 Share'],['🔕 Follow:OFF','⋯ More']]);
+  await f.cb(1,'album-share');assert.match(f.buttons()[0].text,/ON$/);assert.ok(f.buttons().find(b=>b.text==='Copy link').copy_text.text.includes('start=u_'));
+  await f.cb(1,'album-share-set','off');assert.equal(f.buttons().find(b=>b.text==='Copy link').copy_text.text,`https://t.me/FictionalBot?startapp=gallery_${f.e.id}`);
+  assert.equal(JSON.stringify(f.e),before);assert.equal(Object.keys(f.data.events).length,1);
+  await f.cb(1,'album-more');assert.ok(f.buttons().some(b=>b.text==='↩️ Back to event'));assert.ok(!f.buttons().some(b=>b.callback_data?.startsWith('album-danger:')));
+  await f.cb(1,'v');assert.ok(!f.buttons().some(b=>b.text==='📥 Get all (0)'));
+});
+test('private event guest, link contributor, disabled gallery and outsider checks keep their existing boundaries',async()=>{
+  const f=fixture();delete f.e.kind;f.e.guests={2:{name:'Guest',status:'yes'}};
+  await f.cb(2,'album-open');assert.equal(f.last().text,f.e.title);
+  await f.cb(3,'album-open');assert.equal(f.last().text,f.e.title);
+  await f.cb(4,'album-share');assert.match(f.last().text,/unavailable/);
+  f.e.allowLinkUploads=false;const before=JSON.stringify(f.e);
+  await f.cb(1,'album-share-set','on');assert.match(f.buttons()[0].text,/OFF$/);assert.equal(JSON.stringify(f.e),before);
+  await f.cb(3,'album-open');assert.match(f.last().text,/unavailable/);
+  f.e.permissions.viewMedia=false;await f.cb(2,'album-open');assert.match(f.last().text,/unavailable/);
+  await f.cb(1,'album-open');assert.equal(f.last().text,f.e.title);
 });

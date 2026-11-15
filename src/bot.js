@@ -122,16 +122,9 @@ export class Bot {
   allowed(e, id) { return e && (isManager(e,id) || !!e.guests[id] && invitationAvailable(e,id)); }
   mediaAllowed(e, id) { return e && (e.kind==='photos' ? !!mediaRole(e,id,this.db.preferences[id]) : this.allowed(e, id) || !!mediaRole(e,id,this.db.preferences[id])); }
   mediaCan(e,id,key) { return mediaCan(e,id,key,this.db.preferences[id]); }
-  async mediaCard(id, e) {
-    if (!this.mediaAllowed(e, id) || e.cancelled) return this.home(id, 'This media link is unavailable.');
-    const rows=[];
-    if(e.kind==='photos')return albumMain(this,id,e);
-    if (this.mediaCan(e,id,'uploadMedia')) rows.push([button('📎 Add media',`media-add:${e.id}`)]);
-    if (this.appUrl && this.mediaCan(e,id,'viewMedia')) rows.push([this.miniButton('🗂 Shared media',`?gallery=${e.id}`)]);
-    if (!this.appUrl && this.mediaCan(e,id,'viewMedia')) rows.push([button('🗂 Shared media',`m:${e.id}:0`)]);
-    rows.push([button(menu.home,'nav:home')]);
-    if (e.banner) return this.api('sendPhoto',{chat_id:id,photo:e.banner,caption:e.title,reply_markup:keyboard(...rows)});
-    return this.send(id,e.title,keyboard(...rows));
+  async mediaCard(id,e){
+    if(!e || e.cancelled || !this.mediaAllowed(e,id) || !this.mediaCan(e,id,'viewMedia'))return this.home(id,'This media link is unavailable.');
+    return albumMain(this,id,e);
   }
   permissionKeyboard(e, prefix) {
     const settings = permissions(e);
@@ -640,15 +633,15 @@ export class Bot {
     if(q.id)await this.api('answerCallbackQuery', { callback_query_id: q.id,...(action==='upload-status'?{__uploadNotice:true}:{}) }).catch(() => {});
     if(action==='media-cancel')return cancelMedia(this,id,e,arg);
     if(action==='upload-status')return this.uploadStatus(id,eid,q.message);
-    if(['album-share','album-share-set','album-more'].includes(action))return albumMenuCallback(this,id,e,action,arg);
+    if(['album-open','album-share','album-share-set','album-more'].includes(action))return albumMenuCallback(this,id,e,action,arg);
     if(action==='media-get' || action==='media-follow' || action==='media-retry'){
-      if(e?.kind!=='photos' || !this.mediaAllowed(e,id) || !this.mediaCan(e,id,'viewMedia'))return this.home(id,'This media link is unavailable.');
+      if(!e || e.cancelled || !this.mediaAllowed(e,id) || !this.mediaCan(e,id,'viewMedia'))return this.home(id,'This media link is unavailable.');
       const state=mediaDeliveryState(this.db,id,e.id);
       if(action==='media-retry'){
         const unknown=Object.entries(state.uncertain || {}).filter(([mid,token])=>state.pending[mid]===token).map(([mid])=>mid);
         if(!unknown.length)return refreshMedia(this,id);
         if(arg!=='confirm')return this.send(id,`Delivery of ${unknown.length} files is unconfirmed. Check your chat first. Retrying may send copies of files that already arrived.`,keyboard([button('Retry unconfirmed files',`media-retry:${e.id}:confirm`),button('Keep waiting',`v:${e.id}`)]));
-        for(const mid of unknown){delete state.pending[mid];delete state.uncertain[mid];if(state.cancelled)delete state.cancelled[mid];}
+        for(const mid of unknown){delete state.pending[mid];delete state.uncertain[mid];if(state.uncertainReason)delete state.uncertainReason[mid];if(state.cancelled)delete state.cancelled[mid];}
         const queued=await queueMediaFiles(this,id,e,e.media.filter(file=>unknown.includes(file.id)));
         return this.send(id,`${queued} files queued for an explicitly requested retry.`);
       }
@@ -898,7 +891,7 @@ export class Bot {
     if (action === 'u') { this.session(id, { event: eid, step: 'upload' }); return this.prompt(id, `Send photos, videos, or files for this event. ${permissions(e).viewMedia ? 'Guests can view the shared collection.' : 'The shared collection is private to the organiser.'} Tap Finish uploads when finished.`); }
     if (action === 'm') {
       if(!this.mediaCan(e,id,'viewMedia'))return this.send(id,'The organiser has not enabled the gallery for guests.');
-      if (this.appUrl) return this.send(id, 'Open Shared media to view, save, or send files to your Telegram chat.', keyboard([this.miniButton('🗂 Shared media', `?gallery=${eid}`)]));
+      if (this.appUrl) return this.mediaCard(id,e);
       const page = Number(arg);
       if (!Number.isSafeInteger(page) || page < 0) return;
       if (page === 0 && this.appUrl && e.media.filter(f => f.type === 'photo').length > 10) await this.send(id, 'There are more than 10 images. The event gallery is an easier way to browse and download them.', keyboard([this.miniButton('🖼 Open event gallery', `?gallery=${eid}`)], [button('Continue in chat', `m:${eid}:1`)]));
