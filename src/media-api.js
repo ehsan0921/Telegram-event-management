@@ -43,8 +43,11 @@ export async function mediaApi(request, env, user) {
       const current = data.events[e.id];
       if (!bot.mediaAllowed(current, user.id) || !bot.mediaCan(current, user.id, 'viewMedia')) throw new Error('Access changed');
       const file = current.media.find(item => item.id === f.id); if (!file) throw new Error('File removed');
+      const state=bot.db.preferences[user.id]?.mediaDelivery?.[current.id];
+      if(state?.uncertain?.[file.id] && state.pending[file.id]===state.uncertain[file.id])return 'unconfirmed';
       return queueMedia(bot,user.id,current,file);
     });
+    if(queued==='unconfirmed')return json({error:'Previous delivery is unconfirmed. Check your Telegram chat and use /refresh in the bot to review an explicit retry.'},409);
     return json({ queued: true, alreadyQueued: !queued });
   }
   if (request.method !== 'GET' || (match[4] && match[4]!=='thumbnail')) return json({ error: 'Not found.' }, 404);

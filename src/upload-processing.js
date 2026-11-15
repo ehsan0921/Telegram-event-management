@@ -16,7 +16,7 @@ export async function registerUpload(env,update,user,sendReceipt){
   if(update.pre_checkout_query || update.message?.successful_payment || update.message?.refunded_payment)return null;
   const id=String(user.id),finish=isUploadFinish(update);
   const media=update.message?.chat?.type==='private' && uploadedMedia(update.message);
-  if(!finish && !media)return {id,finish,media,callback:update.callback_query,updateId:update.update_id};
+  if(!finish && !media)return {id,finish,media,callback:update.callback_query,refresh:/^\/refresh(?:@\w+)?(?:\s.*)?$/.test(update.message?.text?.trim() || ''),updateId:update.update_id};
   if(await env.DB.prepare('SELECT id FROM processed WHERE id=?').bind(update.update_id).first())return null;
   if(media){
     await env.DB.prepare("INSERT INTO records(kind,id,data) SELECT 'upload_pending',?,json_object('user',?,'batch',coalesce(json_extract(data,'$.uploadBatch'),'legacy:'||json_extract(data,'$.event'))) FROM records WHERE kind='sessions' AND id=? AND json_extract(data,'$.step')='upload' AND NOT EXISTS (SELECT id FROM processed WHERE id=?) ON CONFLICT(kind,id) DO NOTHING").bind(String(update.update_id),id,id,update.update_id).run();
@@ -42,7 +42,7 @@ export async function registerUpload(env,update,user,sendReceipt){
     }
     job=await read(env,'upload_finish',id);
   }
-  return {id,finish,media,job,callback:update.callback_query,updateId:update.update_id};
+  return {id,finish,media,job,callback:update.callback_query,refresh:/^\/refresh(?:@\w+)?(?:\s.*)?$/.test(update.message?.text?.trim() || ''),updateId:update.update_id};
 }
 
 export async function guardUpload(env,context,bot,persist){
@@ -73,8 +73,8 @@ export async function guardUpload(env,context,bot,persist){
       bot.uploadReceipt=job.receipt;
       persist("UPDATE records SET data=json_set(data,'$.closed',1) WHERE kind='upload_finish' AND id=?",id);
     }else if(updateId>job.updateId || !media){
-      if(context.callback?.data?.startsWith('upload-status')){
-        await bot.api('answerCallbackQuery',{callback_query_id:context.callback.id});
+      if(context.refresh || context.callback?.data?.startsWith('upload-status')){
+        if(context.callback?.id)await bot.api('answerCallbackQuery',{callback_query_id:context.callback.id});
         const count=bot.db.events[job.event]?.media?.filter(file=>file.by===Number(id)).length || 0;
         await bot.send(Number(id),`⏳ Uploads are still being saved. ${count} of your files are currently saved in this collection. Please wait for confirmation; saving will retry automatically.`);
         return true;

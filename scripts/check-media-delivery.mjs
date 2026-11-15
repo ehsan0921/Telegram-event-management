@@ -7,7 +7,7 @@ const calls=[];
 const worker=new Miniflare(convertV4MiniflareOptions({workers:[{
   name:'fictional-media-check',modules:true,scriptPath:'.wrangler/build/worker.js',compatibilityDate:'2026-10-05',compatibilityFlags:['nodejs_compat'],d1Databases:['DB'],
   bindings:{APP_ENV:'production',BOT_USERNAME:'FictionalBot',APP_URL:'https://fictional.test/app',TELEGRAM_BOT_TOKEN:'fictional-token',TELEGRAM_WEBHOOK_SECRET:'fictional-secret'},
-  outboundService:async request=>{const params=await request.json();calls.push({method:new URL(request.url).pathname.split('/').at(-1),...params});return Response.json({ok:true,result:{message_id:calls.length,chat:{id:params.chat_id}}});}
+  outboundService:async request=>{const params=await request.json();calls.push({method:new URL(request.url).pathname.split('/').at(-1),...params});return Response.json({ok:true,result:new URL(request.url).pathname.endsWith('/sendMediaGroup')?params.media.map((_,index)=>({message_id:calls.length*10+index,chat:{id:params.chat_id}})):{message_id:calls.length,chat:{id:params.chat_id}}});}
 }]}));
 try{
   const db=await worker.getD1Database('DB');
@@ -39,5 +39,12 @@ try{
   await callback(2,'media-get','new');await settle();assert.equal(calls.filter(call=>call.method==='sendPhoto').length,1);
   await callback(2,'media-follow','off');await settle();await callback(3,'media-add');await message(3,'',{photo:[{file_id:'fictional-photo-two'}]});await settle();
   assert.equal(calls.filter(call=>call.method==='sendPhoto').length,1);
+  await callback(2,'media-get','all');await settle();
+  const albums=calls.filter(call=>call.method==='sendMediaGroup');
+  assert.equal(albums.length,1);assert.equal(albums[0].media.length,2);
+  assert.deepEqual(albums[0].media.map(file=>file.media),['fictional-photo','fictional-photo-two']);
+  assert.equal((await read('preferences',2)).mediaDelivery[album.id].received.length,2);
+  await callback(2,'media-get','new');await settle();
+  assert.equal(calls.filter(call=>call.method==='sendMediaGroup').length,1);
   console.log('Worker upload completion, shared menus, pending deduplication, delivery receipts and Follow on/off passed. D1 local; Telegram mocked.');
 }finally{await worker.dispose();}

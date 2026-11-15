@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {setupGallery} from '../public/gallery.js';
+import {readFileSync} from 'node:fs';
+const productionAction=readFileSync(new URL('../public/app.js',import.meta.url),'utf8').match(/^function action\(.*$/m)[0];
 
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};}
 
@@ -66,7 +68,7 @@ function galleryHarness(t,api=async()=>({title:'Club meetup',media:[],canUpload:
   globalThis.fetch=(...args)=>{fetches.push(args);return fetchResult(...args);};
   const $=id=>{if(!nodes.has(id))nodes.set(id,new Node());return nodes.get(id);};
   const element=(tag,text='',className='')=>Object.assign(new Node(tag,text),{className});
-  const action=(text,onclick)=>Object.assign(new Node('button',text),{onclick});
+  const action=new Function('element','notice','return ('+productionAction+');')(element,message=>notices.push(message));
   const controls=setupGallery({$,api:(...args)=>{calls.push(args);return api(...args);},element,action,go:route=>routes.push(route),notice:message=>notices.push(message),openTelegram(){},initData:'fictional-init-data',renderAlbumDetails});
   const descendants=node=>[node,...node.children.flatMap(descendants)];
   return {$,calls,notices,routes,fetches,observers,...controls,setFetch(fn){fetchResult=fn;},button:text=>descendants($('gallery-list')).find(node=>node.tagName==='BUTTON' && node.textContent===text)};
@@ -169,7 +171,7 @@ test('previews show loading, recover from fetch and decode failures, and keep fi
   const refresh=f.button('↻ Refresh preview');assert.equal(refresh.hidden,false);assert.equal(refresh.disabled,false);
   assert.ok(f.button('Download'));assert.ok(f.button('Send to Telegram'));
   f.setFetch(async()=>new Response(new Blob(['fictional image'],{type:'image/jpeg'})));
-  await refresh.onclick();assert.equal(refresh.disabled,true);assert.equal(status.children[0].hidden,false);
+  await refresh.onclick();assert.equal(refresh.disabled,false);assert.equal(status.children[0].hidden,false);
   image.onerror();assert.equal(refresh.hidden,false);
   await refresh.onclick();image.onload();assert.equal(status.hidden,true);assert.equal(image.hidden,false);
 });
@@ -210,4 +212,13 @@ test('mobile save uses feature-detected native file sharing and respects cancell
   await f.openGallery('fictional');await f.button('Play video').onclick();
   await f.$('media-save').onclick();assert.equal(shared.length,1);assert.equal(shared[0].files[0].name,'clip.mp4');
   cancel=true;await f.$('media-save').onclick();assert.equal(shared.length,2);assert.equal(f.notices.length,0);
+});
+
+test('Download runs through the real shared action helper and starts an authenticated request',async t=>{
+  t.mock.method(globalThis,'setTimeout',()=>0);
+  const f=galleryHarness(t,async()=>({title:'Fictional album',media:[{id:'fictional',type:'document',filename:'example.pdf'}]}));
+  await f.openGallery('fictional');await f.button('Download').onclick();
+  assert.equal(f.fetches.length,1);
+  assert.equal(f.fetches[0][1].headers.Authorization,'tma fictional-init-data');
+  assert.equal(f.button('Download').disabled,false);
 });

@@ -4,7 +4,7 @@ import {albumMembers} from './album-members.js';
 import {changeAlbumAccess} from './album-access.js';
 import {leaveAlbum,removeInvitation} from './stuff.js';
 import {uploadedMedia,mediaMethods,mediaPayload} from './media-preview.js';
-import {mediaDeliveryState,queueMedia,notifyMediaFollowers} from './media-delivery.js';
+import {mediaDeliveryState,queueMedia,queueMediaFiles,refreshMedia,notifyMediaFollowers} from './media-delivery.js';
 import {startBroadcast,toggleBroadcast,collectBroadcast,sendBroadcast,undoBroadcast} from './guest-messages.js';
 import {invitationMode,claimInvitation,invitationSettings,invitationParticipantMode,oneTimeInvites,invitationAvailable,consumeInvitation,reconcileInvitationClaims} from './invitations.js';
 import {isManager,cohostEntries,cohostIds,cohostGuard,cohostLink,createCohostInvite,revokeCohost,claimCohost} from './cohosts.js';
@@ -127,6 +127,8 @@ export class Bot {
     if(e.kind==='photos'){
       const state=mediaDeliveryState(this.db,id,e.id),received=new Set(state.received);
       rows.push([button(`Get all media (${e.media.length})`,`media-get:${e.id}:all`),button(`Get new media (${e.media.filter(file=>!received.has(file.id)).length})`,`media-get:${e.id}:new`)]);
+      const unknown=Object.entries(state.uncertain || {}).filter(([mid,token])=>state.pending[mid]===token).length;
+      if(unknown)rows.push([button(`Review unconfirmed deliveries (${unknown})`,`media-retry:${e.id}:review`)]);
       const browse=[];
       if(this.appUrl)browse.push(this.miniButton('See media on the app',`?gallery=${e.id}`));
       if(this.mediaCan(e,id,'uploadMedia'))browse.push(button('Add media',`media-add:${e.id}`));
@@ -400,6 +402,11 @@ export class Bot {
     else if (current && text === menu.skip && ['phone', 'description', 'inviteMessage', 'comment', 'banner', 'cohostLabel'].includes(current.step)) text = '/skip';
     else if (current && text === menu.done && current.step === 'upload') text = '/done';
     const command = text.split(/\s/)[0].split('@')[0];
+    if(command==='/refresh'){
+      if(current?.step==='upload')return this.uploadStatus(id,current.event);
+      if(current)return this.prompt(id,'Your current input is unchanged. Continue below, or use /cancel to leave this step.');
+      return refreshMedia(this,id);
+    }
     if (command === '/paysupport' || command === '/terms') {
       await this.send(id,'Paid events can use Stars, bank transfers or external payment links. Event terms are shown before payment. Cancelling a Stars event requests a full refund; organisers handle bank and external-link refunds directly. For payment help, send /paysupport followed by your question. Telegram support cannot handle purchases through this bot.');
       for(const [uid,pref] of Object.entries(this.db.preferences))for(const order of Object.values(pref.starOrders || {}))if(order.owner===id || Number(uid)===id){
@@ -648,9 +655,17 @@ export class Bot {
     const e = this.db.events[eid];
     if(q.id)await this.api('answerCallbackQuery', { callback_query_id: q.id,...(action==='upload-status'?{__uploadNotice:true}:{}) }).catch(() => {});
     if(action==='upload-status')return this.uploadStatus(id,eid,q.message);
-    if(action==='media-get' || action==='media-follow'){
+    if(action==='media-get' || action==='media-follow' || action==='media-retry'){
       if(e?.kind!=='photos' || !this.mediaAllowed(e,id) || !this.mediaCan(e,id,'viewMedia'))return this.home(id,'This media link is unavailable.');
       const state=mediaDeliveryState(this.db,id,e.id);
+      if(action==='media-retry'){
+        const unknown=Object.entries(state.uncertain || {}).filter(([mid,token])=>state.pending[mid]===token).map(([mid])=>mid);
+        if(!unknown.length)return refreshMedia(this,id);
+        if(arg!=='confirm')return this.send(id,`Delivery of ${unknown.length} files is unconfirmed. Check your chat first. Retrying may send copies of files that already arrived.`,keyboard([button('Retry unconfirmed files',`media-retry:${e.id}:confirm`),button('Keep waiting',`v:${e.id}`)]));
+        for(const mid of unknown){delete state.pending[mid];delete state.uncertain[mid];}
+        const queued=await queueMediaFiles(this,id,e,e.media.filter(file=>unknown.includes(file.id)));
+        return this.send(id,`${queued} files queued for an explicitly requested retry.`);
+      }
       if(action==='media-follow'){
         if(!['on','off'].includes(arg))return this.mediaCard(id,e);
         state.follow=arg==='on';state.followToken=randomBytes(8).toString('hex');
@@ -658,9 +673,8 @@ export class Bot {
       }else{
         if(!['all','new'].includes(arg))return this.mediaCard(id,e);
         const received=new Set(state.received),files=e.media.filter(file=>arg==='all' || !received.has(file.id));
-        let queued=0;
-        for(const file of files)if(await queueMedia(this,id,e,file))queued++;
-        await this.send(id,queued?`${queued} files queued for your Telegram chat.`:files.length?'Your media is already queued. Please wait for delivery.':'No new media to send.');
+        const queued=await queueMediaFiles(this,id,e,files);
+        await this.send(id,queued?`${queued} files queued for your Telegram chat.`:Object.keys(state.uncertain || {}).length?'Some deliveries are unconfirmed. Check your chat, then use Review unconfirmed deliveries if you want to retry.':files.length?'Your media is already queued. Please wait for delivery.':'No new media to send.');
       }
       return this.mediaCard(id,e);
     }

@@ -21,6 +21,7 @@ export function mediaDeliveryResult(data,tracking,success){
   const state=data.preferences[tracking.user]?.mediaDelivery?.[tracking.event];
   if(state?.pending?.[tracking.media]!==tracking.token)return;
   delete state.pending[tracking.media];
+  if(state.uncertain)delete state.uncertain[tracking.media];
   if(success && !state.received.includes(tracking.media))state.received.push(tracking.media);
 }
 export function mediaDeliveryPayload(bot,tracking){
@@ -48,4 +49,40 @@ export async function notifyMediaFollowers(bot,e,file){
     if(!Number.isSafeInteger(id) || id===file.by || !state?.follow || state.received.includes(file.id))continue;
     await queueMedia(bot,id,e,file,{follow:true});
   }
+}
+
+// Photo/video albums contain 2–10 existing Telegram file IDs. Other types and
+// single remainders retain their native individual delivery methods.
+export async function queueMediaFiles(bot,id,e,files){
+  let count=0,group=[];
+  async function flush(){
+    if(!group.length)return;
+    const selected=group;group=[];
+    if(selected.length===1 || !bot.durableMediaDelivery){for(const file of selected)if(await queueMedia(bot,id,e,file))count++;return;}
+    const state=mediaDeliveryState(bot.db,id,e.id),items=selected.map(file=>({event:e.id,media:file.id,user:id,token:randomBytes(8).toString('hex'),grant:bot.db.preferences[id]?.mediaAccess?.[e.id] || `owner:${e.owner}`}));
+    for(const item of items)state.pending[item.media]=item.token;
+    const media=items.map(item=>{const file=e.media.find(file=>file.id===item.media),payload=mediaDeliveryPayload(bot,item);return {type:file.type,media:file.fileId,...(payload.caption?{caption:payload.caption}:{})};});
+    try{await bot.api('sendMediaGroup',{chat_id:id,media,__mediaGroup:items});count+=items.length;}
+    catch(error){for(const item of items)mediaDeliveryResult(bot.db,item,false);throw error;}
+  }
+  if(!e || e.cancelled || !bot.mediaAllowed(e,id) || !bot.mediaCan(e,id,'viewMedia'))return 0;
+  const state=mediaDeliveryState(bot.db,id,e.id);
+  for(const file of files){
+    if(state.pending[file.id])continue;
+    if(['photo','video'].includes(file.type)){group.push(file);if(group.length===10)await flush();}
+    else{await flush();if(await queueMedia(bot,id,e,file))count++;}
+  }
+  await flush();return count;
+}
+
+export async function refreshMedia(bot,id){
+  const rows=[];let received=0,pending=0,uncertain=0;
+  for(const [eid,state] of Object.entries(bot.db.preferences[id]?.mediaDelivery || {})){
+    const e=bot.db.events[eid];if(!bot.mediaAllowed(e,id) || !bot.mediaCan(e,id,'viewMedia'))continue;
+    received+=state.received.length;
+    const unknown=Object.entries(state.uncertain || {}).filter(([mid,token])=>state.pending[mid]===token).length;
+    uncertain+=unknown;pending+=Math.max(0,Object.keys(state.pending).length-unknown);
+    if(unknown)rows.push([{text:`Review unconfirmed: ${e.title}`,callback_data:`media-retry:${eid}:review`}]);
+  }
+  return bot.send(id,`Media delivery: ${received} files confirmed, ${pending} queued, ${uncertain} unconfirmed. Refresh does not request or resend files.${uncertain?' Check your chat before choosing a retry; unconfirmed files may already be there.':''}`,{inline_keyboard:rows});
 }
