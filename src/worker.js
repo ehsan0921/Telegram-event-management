@@ -68,7 +68,7 @@ export async function processUpdate(env, update) {
       if(await guardUpload(env,upload,bot,persist))return;
       return bot.handle(update);
     }, update.update_id);
-    if(user && (/^media-(get|retry):/.test(update.callback_query?.data || '') || /^(?:📊 |✖ Cancel #|\/refresh(?:@\w+)?(?:\s|$))/.test(update.message?.text?.trim() || '')))await drainProgress(env,user.id,telegram);
+    if(user && (/^media-(get|retry|stop):/.test(update.callback_query?.data || '') || /^(?:📊 |✖ Cancel|\/refresh(?:@\w+)?(?:\s|$))/.test(update.message?.text?.trim() || '')))await drainProgress(env,user.id,telegram);
     return new Response('OK');
   } catch (e) {
     if (e instanceof BusyError) return new Response('Busy; retry', { status: 503 });

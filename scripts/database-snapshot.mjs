@@ -183,7 +183,7 @@ export function prepareSnapshot({ sourceSql, developmentSchema, developmentSetti
     const preferences=db.prepare("SELECT id,data FROM records WHERE kind='preferences'").all();
     for(const row of preferences){
       const pref=JSON.parse(row.data);let changed=false;
-      if(pref.mediaKeyboard){delete pref.mediaKeyboard;changed=true;}
+      for(const key of ['mediaKeyboard','mediaCancelLabels','mediaCancelLabelsFull'])if(key in pref){delete pref[key];changed=true;}
       for(const state of Object.values(pref.mediaDelivery || {}))for(const key of ['jobs','pending','uncertain','uncertainReason','cancelled'])if(key in state){delete state[key];changed=true;}
       if(changed)db.prepare("UPDATE records SET data=? WHERE kind='preferences' AND id=?").run(JSON.stringify(pref),row.id);
     }

@@ -10,15 +10,19 @@ async function deliverProgress(env,row,telegram){
   });
   const remove=persist=>persist('DELETE FROM outbox WHERE id=?',row.id);
   if(!snapshot){await env.DB.prepare('DELETE FROM outbox WHERE id=?').bind(row.id).run();return;}
-  const {payload,notice}=snapshot,fingerprint=JSON.stringify(payload.reply_markup),send=true;
+  const {payload,notice}=snapshot,fingerprint=JSON.stringify(payload.reply_markup),send=true,replyKeyboard=!!payload.reply_markup?.keyboard;
   // Telegram only edits messages without reply markup or with inline keyboards.
   // Updating a bottom reply keyboard requires a replacement sendMessage.
   if(!snapshot.urgent && Date.now()-(notice.lastUpdate || 0)<1000){await env.DB.prepare('UPDATE outbox SET due=? WHERE id=?').bind(Math.ceil((notice.lastUpdate+1000)/1000),row.id).run();return;}
+  if(!snapshot.urgent && notice.keyboard===fingerprint && notice.text===payload.text){
+    await mutateState(env,(data,_bot,{persist})=>{const job=jobFor(data,t);if(job){job.notice.pending=false;job.dirty=job.revision>snapshot.revision;}remove(persist);});return;
+  }
   if(send && notice.sendAttempted){await mutateState(env,(data,_bot,{persist})=>{const job=jobFor(data,t);if(job){job.notice.pending=false;job.notice.disabled=true;job.dirty=false;}remove(persist);});return;}
   if(send)await mutateState(env,data=>{const job=jobFor(data,t);if(job)job.notice.sendAttempted=true;});
   const method='sendMessage';
   const params=payload;
-  console.log(JSON.stringify({event:'media_progress_control',method,replyKeyboard:send,stage:'attempt'}));
+  console.log(JSON.stringify({event:'media_progress_control',method,replyKeyboard,stage:'attempt'}));
+  const started=Date.now();
   const result=await telegram(env,method,params,1500);
   if(result.error_code===429){
     if(send)await mutateState(env,data=>{const job=jobFor(data,t);if(job)delete job.notice.sendAttempted;});
@@ -31,15 +35,23 @@ async function deliverProgress(env,row,telegram){
       job.notice.pending=false;
       if(accepted){
         const wasInitial=!job.notice.keyboardConfirmed;
-        job.notice.messageId=messageId;job.notice.keyboard=fingerprint;job.notice.keyboardConfirmed=true;job.notice.lastUpdate=Date.now();delete job.notice.sendAttempted;job.urgent=false;
+        const oldKeyboard=notice.keyboardMessageId || (notice.keyboard?.includes('"keyboard":')?notice.messageId:null);
+        if(replyKeyboard)job.notice.keyboardMessageId=messageId;else if(oldKeyboard)job.notice.keyboardMessageId=oldKeyboard;
+        job.notice.messageId=messageId;job.notice.keyboard=fingerprint;job.notice.text=payload.text;job.notice.keyboardConfirmed=true;job.notice.lastUpdate=Date.now();delete job.notice.sendAttempted;job.urgent=false;
         job.dirty=job.revision>snapshot.revision;
         if(wasInitial && !Object.values(job.items).some(item=>['queued','inflight','stopping'].includes(item.status))){job.revision++;job.dirty=true;}
       }else{job.notice.disabled=true;job.dirty=false;}
     }
     remove(persist);
   });
-  console.log(JSON.stringify({event:'media_progress_control',method,replyKeyboard:send,stage:accepted?'accepted':'unconfirmed'}));
-  if(accepted && send && notice.messageId && notice.messageId!==messageId)await telegram(env,'deleteMessage',{chat_id:t.user,message_id:notice.messageId},1000);
+  console.log(JSON.stringify({event:'media_progress_control',method,replyKeyboard,stage:accepted?'accepted':'unconfirmed',elapsedMs:Date.now()-started}));
+  if(accepted){
+    const oldKeyboard=notice.keyboardMessageId || (notice.keyboard?.includes('"keyboard":')?notice.messageId:null);
+    // An inline disambiguation prompt does not replace the bottom keyboard.
+    // Keep its source message until an acknowledged reply-keyboard replacement.
+    const oldIds=[notice.messageId,...(replyKeyboard?[oldKeyboard]:[])].filter(id=>id && id!==messageId && (replyKeyboard || id!==oldKeyboard));
+    for(const oldId of new Set(oldIds))await telegram(env,'deleteMessage',{chat_id:t.user,message_id:oldId},1000);
+  }
 }
 export async function drainProgress(env,user,telegram){
   const query="SELECT params FROM outbox WHERE due<=unixepoch() AND json_type(params,'$.__mediaProgress') IS NOT NULL";

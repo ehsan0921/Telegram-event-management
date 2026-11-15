@@ -634,6 +634,7 @@ export class Bot {
     const [action, eid, arg, version] = (q.data || '').split(':');
     const e = this.db.events[eid];
     if(q.id)await this.api('answerCallbackQuery', { callback_query_id: q.id,...(action==='upload-status'?{__uploadNotice:true}:{}) }).catch(() => {});
+    if(action==='media-stop')return progressTextAction(this,id,{event:eid,job:arg,cancel:true});
     if(action==='media-cancel')return cancelMedia(this,id,e,arg);
     if(action==='upload-status')return this.uploadStatus(id,eid,q.message);
     if(['album-open','album-share','album-share-set','album-more'].includes(action))return albumMenuCallback(this,id,e,action,arg);
