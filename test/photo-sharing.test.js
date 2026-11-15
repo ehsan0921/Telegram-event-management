@@ -27,10 +27,10 @@ test('photo-only creation works from the keyboard and from Create event without 
     assert.equal(e.kind,'photos');assert.equal(e.startsAt,undefined);assert.equal(e.isPublic,false);assert.deepEqual(e.guests,{});
     assert.notEqual(e.viewToken,e.uploadToken);
     const card=f.calls.at(-1),buttons=card.reply_markup.inline_keyboard.flat();
-    for(const role of ['viewer','contributor']){
-      const copy=buttons.find(b=>b.text===`Copy ${role} link`);
-      assert.equal(copy.copy_text.text,photoLinks(e,'FictionalPhotosBot')[role]);
-      assert.equal(copy.url,undefined);assert.equal(copy.callback_data,undefined);
+    for(const role of ['contributor','viewer']){
+      await f.cb(1,`album-share-set:${e.id}:${role==='contributor'?'on':'off'}`);
+      const copy=f.calls.at(-1).reply_markup.inline_keyboard.flat().find(b=>b.text==='Copy link');
+      assert.equal(copy.copy_text.text,photoLinks(e,'FictionalPhotosBot')[role]);assert.equal(copy.url,undefined);
     }
     assert.ok(!buttons.some(b=>/ticket|RSVP|Accept/.test(b.text)));
     assert.ok(publicEvent(e,1,'FictionalPhotosBot').photoLinks);
@@ -99,7 +99,8 @@ test('album deletion is owner-only, asks first and invalidates sharing and uploa
   await f.cb(2,'album-delete:'+e.id);await f.cb(2,'album-delete-confirm:'+e.id);
   assert.equal(f.store.data.events[e.id],e);
   await f.cb(1,'v:'+e.id);
-  assert.equal(f.calls.at(-1).reply_markup.inline_keyboard.at(-1)[0].callback_data,'album-danger:'+e.id);
+  await f.cb(1,'album-more:'+e.id);
+  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='album-danger:'+e.id));
   await f.cb(1,'album-danger:'+e.id);
   assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='album-delete:'+e.id));
   await f.cb(1,'album-delete:'+e.id);assert.equal(f.store.data.events[e.id],e);
@@ -143,7 +144,8 @@ test('viewers cannot upload via callbacks, guessed upload links or stale contrib
   await f.msg(2,'/start p_'+e.viewToken);
   assert.equal(mediaRole(e,2,f.store.data.preferences[2]),'viewer');
   assert.equal(f.bot.mediaCan(e,2,'viewMedia'),true);assert.equal(f.bot.mediaCan(e,2,'uploadMedia'),false);
-  assert.ok(!f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data?.startsWith('media-add:')));
+  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='Add media'));
+  assert.equal(f.bot.mediaCan(e,2,'uploadMedia'),false);
   await f.cb(2,'media-add:'+e.id);assert.notEqual(f.store.data.sessions[2]?.step,'upload');
   await f.msg(2,'/start a_'+e.id);assert.notEqual(f.store.data.sessions[2]?.step,'upload');
   await f.cb(2,'book:'+e.id);assert.deepEqual(e.guests,{});

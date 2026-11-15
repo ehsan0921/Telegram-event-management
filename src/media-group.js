@@ -1,3 +1,4 @@
+import {mediaMethods} from './media-preview.js';
 import {mutateState} from './worker-store.js';
 import {mediaDeliveryPayload,mediaDeliveryResult,mediaDeliveryState} from './media-delivery.js';
 
@@ -8,13 +9,14 @@ export async function prepareMediaGroup(env,row){
   if(previous){await env.DB.prepare('UPDATE outbox SET due=? WHERE id=?').bind(Math.max(previous.due,Math.floor(Date.now()/1000)+1),row.id).run();return 'deferred';}
   if(saved.__mediaGroup)return true;
   const items=[saved.__mediaDelivery],ids=[];
-  if(['sendPhoto','sendVideo'].includes(row.method)){
-    const next=await env.DB.prepare("SELECT id,method,params,due FROM outbox WHERE rowid>(SELECT rowid FROM outbox WHERE id=?) AND coalesce(json_extract(params,'$.__mediaGroup[0].user'),json_extract(params,'$.__mediaDelivery.user'))=? AND coalesce(json_extract(params,'$.__mediaGroup[0].event'),json_extract(params,'$.__mediaDelivery.event'))=? ORDER BY rowid LIMIT 9").bind(row.id,first.user,first.event).all();
-    for(const candidate of next.results){
-      const params=JSON.parse(candidate.params);
-      if(candidate.due>Math.floor(Date.now()/1000) || !['sendPhoto','sendVideo'].includes(candidate.method) || !params.__mediaDelivery || params.__mediaDelivered)break;
-      items.push(params.__mediaDelivery);ids.push(candidate.id);
-    }
+  const next=await env.DB.prepare("SELECT id,method,params,due FROM outbox WHERE rowid>(SELECT rowid FROM outbox WHERE id=?) AND coalesce(json_extract(params,'$.__mediaGroup[0].user'),json_extract(params,'$.__mediaDelivery.user'))=? AND coalesce(json_extract(params,'$.__mediaGroup[0].event'),json_extract(params,'$.__mediaDelivery.event'))=? ORDER BY rowid LIMIT 9").bind(row.id,first.user,first.event).all();
+  const candidates=[row,...next.results];
+  const types=await mutateState(env,(_data,bot)=>candidates.map(candidate=>{const tracking=JSON.parse(candidate.params).__mediaDelivery,payload=tracking && mediaDeliveryPayload(bot,tracking);return payload?Object.keys(mediaMethods).find(type=>payload[type]):null;}));
+  const category=type=>['photo','video'].includes(type)?'visual':['document','audio'].includes(type)?type:null;
+  if(category(types[0]))for(let index=1;index<candidates.length;index++){
+    const candidate=candidates[index],params=JSON.parse(candidate.params);
+    if(candidate.due>Math.floor(Date.now()/1000) || !params.__mediaDelivery || params.__mediaDelivered || category(types[index])!==category(types[0]))break;
+    items.push(params.__mediaDelivery);ids.push(candidate.id);
   }
   row.params=JSON.stringify({chat_id:first.user,__mediaGroup:items});
   await env.DB.batch([
@@ -58,14 +60,17 @@ export async function deliverMediaGroup(env,row,telegram){
   const params=items.length===1 ? prepared.payloads[0] : {
     chat_id:items[0].user,
     media:prepared.payloads.map(payload=>{
-      const type=payload.photo?'photo':'video';
+      const type=Object.keys(mediaMethods).find(type=>payload[type]);
       return {type,media:payload[type],...(payload.caption?{caption:payload.caption}:{})};
     })
   };
-  const method=items.length===1 ? (params.photo?'sendPhoto':params.video?'sendVideo':row.method) : 'sendMediaGroup';
+  const method=items.length===1 ? mediaMethods[Object.keys(mediaMethods).find(type=>params[type])] : 'sendMediaGroup';
   saved={...params,__mediaGroup:items,__mediaGroupAttempted:true};
   await env.DB.prepare('UPDATE outbox SET method=?,params=? WHERE id=?').bind(method,JSON.stringify(saved),row.id).run();
+  const started=Date.now();
+  console.log(JSON.stringify({event:'media_delivery_attempt',method,files:items.length}));
   const result=await telegram(env,method,params);
+  console.log(JSON.stringify({event:'media_delivery_result',method,files:items.length,ok:!!result.ok,code:result.error_code || null,elapsedMs:Date.now()-started,receipts:Array.isArray(result.result)?result.result.length:result.result?.message_id?1:0}));
   if(result.ok){
     const receipts=items.length===1?[result.result]:result.result;
     const valid=Array.isArray(receipts) && receipts.length===items.length && receipts.every(message=>Number.isSafeInteger(message?.message_id) && message.message_id>0 && (!message.chat || message.chat.id===items[0].user)) && new Set(receipts.map(message=>message.message_id)).size===items.length;
