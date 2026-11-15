@@ -6,12 +6,25 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
   const downloads=new Map(),sends=new Map(),waiting=[];
   let activeDownloads=0,mediaController=new AbortController();
   function resetDownloads(){mediaController.abort();mediaController=new AbortController();downloads.clear();}
-  function sendFile(id,file){
-    const key=`${id}/${file.id}`;
-    if(!sends.has(key))sends.set(key,api(`events/${id}/media/${file.id}/send`,{}).finally(()=>sends.delete(key)));
-    return sends.get(key);
+  const sendStatusText=status=>({sent:'sent',partial:'Batch delivery was incomplete. This file is not confirmed sent; check your chat before retrying.',queued:'Queued for your Telegram chat. Delivery is not confirmed yet.',stopping:'Cancellation is settling. An in-flight file may still arrive.',cancelled:'Delivery cancelled. Files already sent remain in your chat.',failed:'Delivery failed. This file has not been confirmed sent.',unconfirmed:'Delivery could not be confirmed. Check your chat or /refresh before requesting a retry.'}[status] || 'Delivery is not confirmed.');
+  function sendFile(id,file,progress){
+    const key=`${id}/${file.id}`,current=generation;
+    if(sends.has(key))return sends.get(key);
+    const task=(async()=>{
+      const result=await api(`events/${id}/media/${file.id}/send`,{});
+      let status=result.status || (result.queued?'queued':'unconfirmed');if(['queued','stopping'].includes(status))progress?.(status);
+      if(!result.request || !['queued','stopping'].includes(status))return {status};
+      for(let attempt=0;attempt<20;attempt++){
+        if(current!==generation)return {status:'unconfirmed'};
+        const checked=await api(`events/${id}/media/${file.id}/delivery-status?request=${encodeURIComponent(result.request)}`);
+        status=checked.status || 'unconfirmed';if(['queued','stopping'].includes(status))progress?.(status);
+        if(!['queued','stopping'].includes(status))return {status};
+        if(attempt<19)await new Promise(resolve=>setTimeout(resolve,2000));
+      }
+      return {status};
+    })().finally(()=>sends.delete(key));
+    sends.set(key,task);return task;
   }
-  const filename = file => file.filename==='photo'?'photo.jpg':file.filename==='video'?'video.mp4':file.filename;
   function iconAction(icon,label,onclick){
     const button=action(label,onclick),symbol=element('span',icon+' ');
     symbol.setAttribute('aria-hidden','true');button.prepend(symbol);return button;
@@ -25,23 +38,14 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
     if(file.type==='photo') { $('photo-full').src=url; $('photo-full').alt=file.caption || 'Shared photo'; }
     else { $('video-full').src=url; }
     $('media-popup-status').textContent='';
-    $('media-save').onclick=()=>saveBlob(blob,filename(file));
     const showing=popupGeneration;
-    $('media-send').onclick=async()=>{ if($('media-send').disabled)return;$('media-send').disabled=true; try { await sendFile(id,file); if(showing===popupGeneration)$('media-popup-status').textContent='Queued for your Telegram chat. Please wait for delivery.'; } catch(error) { if(showing===popupGeneration)$('media-popup-status').textContent=error.message; } finally { if(showing===popupGeneration)$('media-send').disabled=false; } };
+    $('media-send').onclick=async()=>{
+      if($('media-send').disabled)return;$('media-send').disabled=true;
+      const update=status=>{if(showing===popupGeneration)$('media-popup-status').textContent=sendStatusText(status);};
+      try{const result=await sendFile(id,file,update);update(result.status);}catch(error){if(showing===popupGeneration)$('media-popup-status').textContent=error.message+' Delivery is not confirmed; check your chat before trying again.';}finally{if(showing===popupGeneration)$('media-send').disabled=false;}
+    };
     $('media-send').disabled=false;
     $('photo-dialog').showModal();
-  }
-  async function saveBlob(blob, filename) {
-    // An already-open preview has the bytes ready during the user's gesture,
-    // which lets supported iPhone/Android webviews open their native save/share UI.
-    if(typeof navigator!=='undefined' && typeof File!=='undefined' && navigator.canShare && navigator.share){
-      const files=[new File([blob],filename,{type:blob.type})];
-      if(navigator.canShare({files}))try{await navigator.share({files});return;}catch(error){if(error.name==='AbortError')return;}
-    }
-    const url=URL.createObjectURL(blob),link=document.createElement('a');
-    link.href=url;link.download=filename;document.body?.append(link);link.click();link.remove();
-    setTimeout(()=>URL.revokeObjectURL(url),60000);
-    notice('Download opened. If your phone does not offer Save, use Send to Telegram and save from the chat.');
   }
   function mediaBlob(eventId, fileId,thumbnail=false) {
     const key=`${generation}/${eventId}/${fileId}/${thumbnail}`,signal=mediaController.signal;
@@ -52,7 +56,7 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
       try{
         signal.throwIfAborted();
         const response=await fetch(`/api/events/${eventId}/media/${fileId}${thumbnail?'/thumbnail':''}`,{headers:{Authorization:'tma '+initData},signal:AbortSignal.any([signal,AbortSignal.timeout(30000)])});
-        if(!response.ok){const data=await response.json();throw new Error(data.error || 'Could not download this file.');}return await response.blob();
+        if(!response.ok){const data=await response.json();throw new Error(data.error || 'Could not load this preview. Use Send to Telegram.');}return await response.blob();
       }finally{activeDownloads--;waiting.shift()?.();}
     })().finally(()=>downloads.delete(key));
     downloads.set(key,task);return task;
@@ -70,7 +74,7 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
     try {
       const gallery=await api(`events/${id}/gallery`);if(current!==generation)return;
       renderAlbumDetails?.(id,$('gallery-settings'));
-      $('gallery-title').textContent=gallery.title;$('gallery-summary').textContent=`${gallery.media.length} shared files. Download here or send a file to your Telegram chat.`;
+      $('gallery-title').textContent=gallery.title;$('gallery-summary').textContent=`${gallery.media.length} shared files. Send a file to your Telegram chat.`;
       $('gallery-upload').hidden=!gallery.canUpload;$('gallery-upload').onclick=()=>openTelegram(gallery.uploadUrl);
       $('gallery-copy').hidden=!gallery.galleryUrl;
       $('gallery-copy').onclick=async()=>{try{await navigator.clipboard.writeText(gallery.galleryUrl);notice('Shared media link copied.');}catch{notice('Could not copy. Use Share in the QR code window.');}};
@@ -92,9 +96,8 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
         }
         body.append(element('strong',file.filename==='photo'?'Photo':file.filename),element('p',[file.name?'Shared by '+file.name:'',file.caption].filter(Boolean).join('\n'),'small muted'));
         const buttons=element('div','','event-actions');
-        const downloadButton=iconAction('⬇','Download',async()=>{try{await saveBlob(await mediaBlob(id,file.id),filename(file));}catch(error){notice(error.message);}});
-        const sendButton=iconAction('✈','Send to Telegram',async()=>{try{await sendFile(id,file);notice('Queued for your Telegram chat. Please wait for delivery.');}catch(error){notice(error.message);}});
-        buttons.append(downloadButton,sendButton);
+        const sendButton=iconAction('✈','Send to Telegram',async()=>{const current=generation,update=status=>{if(current===generation)notice(sendStatusText(status));};try{const result=await sendFile(id,file,update);update(result.status);}catch(error){if(current===generation)notice(error.message+' Delivery is not confirmed; check your chat before trying again.');}});
+        buttons.append(sendButton);
         if(kind==='video')buttons.append(iconAction('▶','Play video',async()=>{const pending=++popupGeneration;try{const blob=await mediaBlob(id,file.id);if(current!==generation || pending!==popupGeneration)return;const url=URL.createObjectURL(blob);urls.add(url);showMedia(id,previewFile,blob,url);}catch(error){if(current===generation && pending===popupGeneration)notice(error.message);}}));
         body.append(buttons);card.append(body);list.append(card);
       }
@@ -125,7 +128,7 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
       const shareIcon=element('span','✈ ');shareIcon.setAttribute('aria-hidden','true');$('qr-share').prepend(shareIcon);
       $('qr-description').textContent=shared?'Scan to open Shared media. Event access and viewing permissions still apply.':qr.anyone ? 'Anyone with this link can add media without an RSVP. They can view Shared media if you enable viewing. Private event details stay hidden.' : 'Existing event guests can scan this code to add media. Enable uploads by link in event settings to let anyone contribute without an RSVP.';
       $('qr-share').onclick=()=>openTelegram(`https://t.me/share/url?url=${encodeURIComponent(qr.link)}&text=${encodeURIComponent('Share your event photos and files')}`);
-      $('qr-download').onclick=()=>{const bytes=Uint8Array.from(atob(qr.image.split(',')[1]),character=>character.charCodeAt(0));saveBlob(new Blob([bytes],{type:'image/gif'}),'event-upload-qr.gif');};$('qr-dialog').showModal();
+      $('qr-dialog').showModal();
     }catch(error){if(pending===qrGeneration)notice(error.message);}
   }
   $('gallery-back').onclick=()=>go('events');$('gallery-refresh').onclick=()=>galleryEvent && openGallery(galleryEvent);

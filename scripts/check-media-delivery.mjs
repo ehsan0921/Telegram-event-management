@@ -1,3 +1,4 @@
+import {createHmac} from 'node:crypto';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 import {readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
@@ -46,5 +47,18 @@ try{
   assert.equal((await read('preferences',2)).mediaDelivery[album.id].received.length,2);
   await callback(2,'media-get','new');await settle();
   assert.equal(calls.filter(call=>call.method==='sendMediaGroup').length,1);
+  const auth=new URLSearchParams({auth_date:String(Math.floor(Date.now()/1000)),user:JSON.stringify({id:2,first_name:'Fictional viewer'})});
+  const dataCheck=[...auth].sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>`${k}=${v}`).join('\n');
+  const authKey=createHmac('sha256','WebAppData').update('fictional-token').digest();auth.set('hash',createHmac('sha256',authKey).update(dataCheck).digest('hex'));
+  const firstFile=(await read('events',album.id)).media[0],base=`https://fictional.test/api/events/${album.id}/media/${firstFile.id}`,headers={Authorization:'tma '+auth.toString()};
+  await db.prepare("INSERT INTO delivery_lease(id,owner,expires) VALUES(1,'fictional-status-hold',unixepoch()+60)").run();
+  const started=await worker.dispatchFetch(base+'/send',{method:'POST',headers});assert.equal(started.status,200);const tracking=await started.json();assert.equal(tracking.status,'queued');
+  const statusUrl=base+'/delivery-status?request='+tracking.request;
+  assert.equal((await worker.dispatchFetch(statusUrl)).status,401);
+  assert.equal((await (await worker.dispatchFetch(statusUrl,{headers})).json()).status,'queued');
+  await db.prepare("DELETE FROM delivery_lease WHERE owner='fictional-status-hold'").run();await callback(2,'v');await settle();
+  assert.equal((await (await worker.dispatchFetch(statusUrl,{headers})).json()).status,'sent');
+  const pref=await read('preferences',2);pref.mediaAccess={};await save('preferences',2,pref);
+  assert.equal((await worker.dispatchFetch(statusUrl,{headers})).status,403);
   console.log('Worker upload completion, shared menus, pending deduplication, delivery receipts and Follow on/off passed. D1 local; Telegram mocked.');
 }finally{await worker.dispose();}

@@ -144,7 +144,7 @@ test('viewers cannot upload via callbacks, guessed upload links or stale contrib
   await f.msg(2,'/start p_'+e.viewToken);
   assert.equal(mediaRole(e,2,f.store.data.preferences[2]),'viewer');
   assert.equal(f.bot.mediaCan(e,2,'viewMedia'),true);assert.equal(f.bot.mediaCan(e,2,'uploadMedia'),false);
-  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='Add media'));
+  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='➕ Add media'));
   assert.equal(f.bot.mediaCan(e,2,'uploadMedia'),false);
   await f.cb(2,'media-add:'+e.id);assert.notEqual(f.store.data.sessions[2]?.step,'upload');
   await f.msg(2,'/start a_'+e.id);assert.notEqual(f.store.data.sessions[2]?.step,'upload');

@@ -37,11 +37,11 @@ export async function deliverMediaGroup(env,row,telegram){
     await mutateState(env,(data,_bot,{persist})=>{for(const item of items)mediaDeliveryResult(data,item,true);remove(persist);});
     return true;
   }
-  async function uncertain(){
+  async function uncertain(reason='unknown'){
     await mutateState(env,async(data,bot,{persist})=>{
       for(const item of items){
         const state=mediaDeliveryState(data,item.user,item.event);
-        if(state.pending[item.media]===item.token){state.uncertain ||= {};state.uncertain[item.media]=item.token;}
+        if(state.pending[item.media]===item.token){state.uncertain ||= {};state.uncertain[item.media]=item.token;state.uncertainReason ||= {};state.uncertainReason[item.media]=reason;}
       }
       const first=items[0],e=data.events[first.event];
       if(bot.mediaAllowed(e,first.user) && bot.mediaCan(e,first.user,'viewMedia'))await bot.send(first.user,`Delivery of ${items.length} files could not be confirmed. Check your Telegram chat before retrying; they may already be there. Use /refresh to review unconfirmed deliveries.`);
@@ -74,7 +74,7 @@ export async function deliverMediaGroup(env,row,telegram){
   if(result.ok){
     const receipts=items.length===1?[result.result]:result.result;
     const valid=Array.isArray(receipts) && receipts.length===items.length && receipts.every(message=>Number.isSafeInteger(message?.message_id) && message.message_id>0 && (!message.chat || message.chat.id===items[0].user)) && new Set(receipts.map(message=>message.message_id)).size===items.length;
-    if(!valid){await uncertain();return true;}
+    if(!valid){await uncertain(Array.isArray(receipts) && receipts.length>0 && receipts.length<items.length?'partial':'unknown');return true;}
     saved.__mediaGroupDelivered=receipts.map(message=>message.message_id);
     await env.DB.prepare('UPDATE outbox SET params=? WHERE id=?').bind(JSON.stringify(saved),row.id).run();
     await mutateState(env,(data,_bot,{persist})=>{for(const item of items)mediaDeliveryResult(data,item,true);remove(persist);});
