@@ -59,6 +59,8 @@ test('snapshot replaces nonempty development and can be copied repeatedly', () =
 test('snapshot clears sessions and delivery state while retaining the dev whitelist and settings', () => {
   const sourceSql = source(`
     INSERT INTO records VALUES('sessions','900000001','{"step":"upload","eventId":"source-event"}');
+    INSERT INTO records VALUES('upload_pending','101','{"user":"900000001","batch":"fictional"}');
+    INSERT INTO records VALUES('upload_finish','900000001','{"batch":"fictional","closed":false}');
     INSERT INTO records VALUES('events','source-event','{"title":"Fixture event"}');
     INSERT INTO outbox(id,method,params) VALUES('queued','sendMessage','{"chat_id":900000001,"text":"Fixture"}');
     INSERT INTO processed VALUES(100,1);
@@ -76,6 +78,7 @@ test('snapshot clears sessions and delivery state while retaining the dev whitel
     apply(db, sql);
     for (const table of ['outbox', 'processed', 'lease', 'delivery_lease', 'commits']) assert.equal(db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 0);
     assert.equal(db.prepare("SELECT count(*) AS n FROM records WHERE kind='sessions'").get().n, 0);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM records WHERE kind IN ('upload_pending','upload_finish')").get().n, 0);
     for (const setting of developmentSettings) assert.equal(db.prepare('SELECT value FROM app_settings WHERE key=?').get(setting.key).value, setting.value);
     assert.deepEqual(JSON.parse(db.prepare("SELECT value FROM app_settings WHERE key='production-snapshot'").get().value), { version: 1, copiedAt });
     assert.equal(counts.removedSessions, 1);

@@ -39,13 +39,13 @@ export async function mediaApi(request, env, user) {
   const f = e.media?.find(item => item.id === match[3]);
   if (!f) return json({ error: 'This file is no longer in the event.' }, 404);
   if (match[4] === 'send' && request.method === 'POST') {
-    await mutateState(env, async (data, bot) => {
+    const queued=await mutateState(env, async (data, bot) => {
       const current = data.events[e.id];
       if (!bot.mediaAllowed(current, user.id) || !bot.mediaCan(current, user.id, 'viewMedia')) throw new Error('Access changed');
       const file = current.media.find(item => item.id === f.id); if (!file) throw new Error('File removed');
-      await queueMedia(bot,user.id,current,file);
+      return queueMedia(bot,user.id,current,file);
     });
-    return json({ sent: true });
+    return json({ queued: true, alreadyQueued: !queued });
   }
   if (request.method !== 'GET' || (match[4] && match[4]!=='thumbnail')) return json({ error: 'Not found.' }, 404);
   const thumbnail=match[4]==='thumbnail';if(thumbnail && !f.thumbnail)return json({error:'No thumbnail.'},404);

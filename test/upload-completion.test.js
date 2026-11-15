@@ -28,10 +28,10 @@ test('finish receipt precedes the state lease, while completion is committed wit
   assert.equal((await processUpdate(env,update)).status,200);
   assert.equal(db.prepare("SELECT count(*) AS n FROM records WHERE kind='sessions'").get().n,0);
   const messages=db.prepare('SELECT params FROM outbox ORDER BY id').all().map(row=>JSON.parse(row.params));
-  assert.equal(messages.length,2);assert.ok(messages.every(message=>message.__uploadNotice));
-  assert.match(messages[0].text,/1 saved/);
-  assert.equal(messages[1].message_id,101);
-  assert.equal(db.prepare('SELECT method FROM outbox ORDER BY id').all()[1].method,'editMessageText');
+  assert.equal(messages.length,1);assert.ok(messages.every(message=>message.__uploadNotice));
+  assert.match(messages[0].text,/1 of your files saved/);
+  assert.equal(messages[0].message_id,101);
+  assert.equal(db.prepare('SELECT method FROM outbox ORDER BY id').all()[0].method,'editMessageText');
   await processUpdate(env,update);
-  assert.equal(db.prepare('SELECT count(*) AS n FROM outbox').get().n,2);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM outbox').get().n,1);
 });

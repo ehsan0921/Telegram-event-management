@@ -49,6 +49,7 @@ function galleryHarness(t,api=async()=>({title:'Club meetup',media:[],canUpload:
     close(){this.open=false;this.onclose?.();}
     pause(){this.pauses++;}
     load(){this.loads++;}
+    click(){this.clicks=(this.clicks || 0)+1;}
   }
   const globals={document:globalThis.document,IntersectionObserver:globalThis.IntersectionObserver,fetch:globalThis.fetch};
   t.after(()=>{for(const [name,value] of Object.entries(globals)){if(value===undefined)delete globalThis[name];else globalThis[name]=value;}});
@@ -177,4 +178,36 @@ test('gallery defaults to the newest media first',async t=>{
   const f=galleryHarness(t,async()=>({title:'Fictional album',media:[{id:'old',type:'document',filename:'Old',at:'2026-10-01T00:00:00Z'},{id:'new',type:'document',filename:'New',at:'2026-10-26T00:00:00Z'}]}));
   await f.openGallery('first');
   assert.deepEqual(f.$('gallery-list').children.map(card=>card.children[0].children[0].textContent),['New','Old']);
+});
+
+test('visible previews use at most three concurrent downloads and duplicate requests share one fetch',async t=>{
+  const files=Array.from({length:8},(_,index)=>({id:String(index),type:'photo',filename:'photo'}));
+  const f=galleryHarness(t,async()=>({title:'Fictional album',media:files})),gate=deferred();
+  let active=0,maximum=0;
+  f.setFetch(async()=>{active++;maximum=Math.max(maximum,active);await gate.promise;active--;return new Response(new Blob(['fictional'],{type:'image/jpeg'}));});
+  await f.openGallery('fictional');
+  const previews=f.observers.map(observer=>observer.intersect());
+  assert.equal(f.fetches.length,3);gate.resolve();await Promise.all(previews);
+  assert.equal(maximum,3);assert.equal(f.fetches.length,8);
+});
+
+test('Send to Telegram disables repeated presses and reports queueing rather than delivery',async t=>{
+  const send=deferred(),file={id:'fictional',type:'document',filename:'example.pdf'};
+  const f=galleryHarness(t,path=>path.endsWith('/send')?send.promise:Promise.resolve({title:'Fictional album',media:[file]}));
+  await f.openGallery('fictional');const button=f.button('Send to Telegram');
+  const first=button.onclick();await button.onclick();assert.equal(button.disabled,true);
+  assert.equal(f.calls.filter(([path])=>path.endsWith('/send')).length,1);assert.equal(f.notices.length,0);
+  send.resolve({queued:true});await first;assert.equal(button.disabled,false);
+  assert.match(f.notices[0],/Queued/);assert.doesNotMatch(f.notices[0],/sent/);
+});
+
+test('mobile save uses feature-detected native file sharing and respects cancellation',async t=>{
+  const descriptor=Object.getOwnPropertyDescriptor(globalThis,'navigator');
+  t.after(()=>{if(descriptor)Object.defineProperty(globalThis,'navigator',descriptor);else delete globalThis.navigator;});
+  const shared=[];let cancel=false;
+  Object.defineProperty(globalThis,'navigator',{configurable:true,value:{canShare:({files})=>files[0] instanceof File,async share(value){shared.push(value);if(cancel)throw Object.assign(Error('Cancelled'),{name:'AbortError'});}}});
+  const f=galleryHarness(t,async()=>({title:'Fictional album',media:[{id:'fictional',type:'video',filename:'clip.mp4'}]}));
+  await f.openGallery('fictional');await f.button('Play video').onclick();
+  await f.$('media-save').onclick();assert.equal(shared.length,1);assert.equal(shared[0].files[0].name,'clip.mp4');
+  cancel=true;await f.$('media-save').onclick();assert.equal(shared.length,2);assert.equal(f.notices.length,0);
 });

@@ -4,6 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import {photoCollection} from '../src/permissions.js';
 import {processUpdate,drainOutbox} from '../src/worker.js';
+import {mediaApi} from '../src/media-api.js';
 
 function fixture(t){
   const db=new DatabaseSync(':memory:');t.after(()=>db.close());
@@ -84,6 +85,33 @@ test('failed Telegram media remains new and revoked access cancels queued delive
   assert.deepEqual(f.state(2).received,[]);assert.deepEqual(f.state(2).pending,{});
   await f.cb(2,'media-get','new');f.save('preferences',2,{mediaAccess:{}});await drainOutbox(f.env);
   assert.equal(f.sent.filter(row=>row.method==='sendPhoto').length,1);
+});
+
+test('Mini App sends report durable queue state, reuse existing file IDs and recheck revocation before delivery',async t=>{
+  const f=fixture(t),path=`https://fictional.test/api/events/${f.album.id}/media/111111111111/send`;
+  const first=await mediaApi(new Request(path,{method:'POST'}),f.env,{id:2});
+  assert.deepEqual(await first.json(),{queued:true,alreadyQueued:false});
+  const again=await mediaApi(new Request(path,{method:'POST'}),f.env,{id:2});
+  assert.deepEqual(await again.json(),{queued:true,alreadyQueued:true});
+  assert.equal(f.sent.length,0);await drainOutbox(f.env);
+  assert.equal(f.sent.length,1);assert.equal(f.sent[0].photo,'fictional-photo');
+  await mediaApi(new Request(path,{method:'POST'}),f.env,{id:2});
+  f.save('preferences',2,{mediaAccess:{}});await drainOutbox(f.env);assert.equal(f.sent.length,1);
+  assert.equal((await mediaApi(new Request(path),f.env,{id:2})).status,403);
+});
+
+test('429 keeps media pending and new until a successful retry',async t=>{
+  const f=fixture(t);let limited=true;
+  t.mock.method(globalThis,'fetch',async(_url,options)=>{
+    const params=JSON.parse(options.body);
+    if(params.photo && limited)return Response.json({ok:false,error_code:429,parameters:{retry_after:7}});
+    return Response.json({ok:true,result:{message_id:123}});
+  });
+  await f.cb(2,'media-get','new');await drainOutbox(f.env);
+  assert.deepEqual(f.state(2).received,[]);assert.equal(Object.keys(f.state(2).pending).length,1);
+  assert.ok(f.db.prepare("SELECT due FROM outbox WHERE method='sendPhoto'").get().due>Math.floor(Date.now()/1000));
+  limited=false;f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);
+  assert.deepEqual(f.state(2).received,['111111111111']);assert.deepEqual(f.state(2).pending,{});
 });
 
 test('follow sends new uploads with notification, stops before delivery when switched off, and preserves hidden attribution',async t=>{
