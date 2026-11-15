@@ -6,7 +6,7 @@ import {mediaDeliveryPayload,mediaDeliveryResult,mediaDeliveryState} from './med
 export async function prepareMediaGroup(env,row){
   const saved=JSON.parse(row.params),first=saved.__mediaGroup?.[0] || saved.__mediaDelivery;
   if(!first || saved.__mediaDelivered)return false;
-  const held=await mutateState(env,data=>(saved.__mediaGroup || [saved.__mediaDelivery]).some(item=>data.preferences[item.user]?.mediaDelivery?.[item.event]?.cancelled?.[item.media]!==item.token && !progressReady(data,item)));
+  const held=await mutateState(env,(data,bot)=>(saved.__mediaGroup || [saved.__mediaDelivery]).some(item=>data.preferences[item.user]?.mediaDelivery?.[item.event]?.cancelled?.[item.media]!==item.token && !progressReady(data,item) && !!mediaDeliveryPayload(bot,item)));
   if(held){await env.DB.prepare('UPDATE outbox SET due=unixepoch()+1 WHERE id=?').bind(row.id).run();return 'deferred';}
   const previous=await env.DB.prepare("SELECT due FROM outbox WHERE rowid<(SELECT rowid FROM outbox WHERE id=?) AND coalesce(json_extract(params,'$.__mediaGroup[0].user'),json_extract(params,'$.__mediaDelivery.user'))=? AND coalesce(json_extract(params,'$.__mediaGroup[0].event'),json_extract(params,'$.__mediaDelivery.event'))=? ORDER BY rowid LIMIT 1").bind(row.id,first.user,first.event).first();
   if(previous){await env.DB.prepare('UPDATE outbox SET due=? WHERE id=?').bind(Math.max(previous.due,Math.floor(Date.now()/1000)+1),row.id).run();return 'deferred';}

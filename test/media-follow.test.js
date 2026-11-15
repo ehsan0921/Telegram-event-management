@@ -383,3 +383,10 @@ test('an ambiguous progress control never replays confirmed media receipts',asyn
   await drainOutbox(f.env);f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);
   assert.equal(f.requests.length,1);assert.equal(f.state(2).received.length,1);
 });
+
+test('revoked access clears queued media even when the initial control was not acknowledged',async t=>{
+  const f=batchFixture(t,['photo']);const real=globalThis.fetch;
+  t.mock.method(globalThis,'fetch',async(url,options)=>JSON.parse(options.body).reply_markup?.keyboard?Response.json({ok:false,error_code:429,parameters:{retry_after:30}}):real(url,options));
+  await f.cb(2,'media-get','all');const pref=f.read('preferences',2);pref.mediaAccess={};f.save('preferences',2,pref);
+  await drainOutbox(f.env);assert.equal(f.requests.length,0);assert.deepEqual(f.state(2).pending,{});
+});
