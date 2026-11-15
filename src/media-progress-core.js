@@ -44,7 +44,7 @@ export function progressPayload(bot,id,eid,job,initial=false){
   const e=bot.db.events[eid];if(!e || !bot.mediaAllowed(e,id) || !bot.mediaCan(e,id,'viewMedia'))return null;
   const s=progressStats(job),current=initial?job:currentJob(bot,id);
   if(current)rememberLabel(bot.db.preferences[id],current);
-  const text=job.cancelRequested?'Stopping. A batch already in flight may still arrive.':s.unknown+s.partial?`Sent ${s.sent}/${s.total} · ${s.unknown+s.partial} unconfirmed. Check chat before retry.`:s.failed?`Sent ${s.sent}/${s.total} · ${s.failed} failed.`:!s.total?'Nothing new to send.':s.remaining===0?`Sent ${s.sent}/${s.total}.`:'…';
+  const text=job.cancelRequested?'Stopping. A batch already in flight may still arrive.':s.unknown+s.partial?`Sent ${s.sent}/${s.total} · ${s.unknown+s.partial} unconfirmed. Check chat before retry.`:s.failed?`Sent ${s.sent}/${s.total} · ${s.failed} failed.`:!s.total?'Nothing new to send.':s.remaining===0?`Sent ${s.sent}/${s.total}.`:'Sending....';
   if(job.confirmRequested && job.notice?.keyboardConfirmed){
     const rows=Object.entries(bot.db.preferences[id].mediaDelivery || {}).flatMap(([event,state])=>Object.values(state.jobs || {}).filter(j=>!j.cancelRequested && Object.values(j.items).some(active) && bot.mediaAllowed(bot.db.events[event],id) && bot.mediaCan(bot.db.events[event],id,'viewMedia')).map(j=>[{text:`Stop: ${bot.db.events[event].title.slice(0,32)} · ${progressStats(j).sent}/${progressStats(j).total}`,callback_data:`media-stop:${event}:${j.id}`}]));
     if(rows.length)return {chat_id:id,text:'Which delivery should stop? An older button may have the same counts.',disable_notification:true,reply_markup:{inline_keyboard:rows}};
