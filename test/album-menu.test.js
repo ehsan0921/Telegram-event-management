@@ -11,7 +11,7 @@ function fixture(){
 }
 test('album main menu uses the approved four readable rows and moves management into More',async()=>{
   const f=fixture();await f.cb(1,'v');
-  assert.deepEqual(f.last().reply_markup.inline_keyboard.map(row=>row.map(b=>b.text)),[['Open album app'],['Get all (0)','Get new (0)'],['Add media','Share'],['Follow On','More']]);
+  assert.deepEqual(f.last().reply_markup.inline_keyboard.map(row=>row.map(b=>b.text)),[['Open album app'],['Get all (0)','Get new (0)'],['Add media','Share'],['Follow:ON','More']]);
   assert.ok(f.buttons().every(button=>button.text.length<24));
   await f.cb(1,'album-more');assert.ok(f.buttons().some(b=>b.callback_data===`album-danger:${f.e.id}`));assert.ok(f.buttons().some(b=>b.text==='Main menu'));
   await f.cb(2,'album-more');assert.ok(f.buttons().some(b=>b.text==='Leave album'));assert.ok(!f.buttons().some(b=>b.text==='Danger zone'));
