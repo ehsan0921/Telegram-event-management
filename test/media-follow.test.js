@@ -40,11 +40,11 @@ test('viewer and contributor menus share layout while viewers never receive cont
   await f.cb(2,'v');await f.cb(3,'v');
   const menus=f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage' ORDER BY rowid").all().map(row=>JSON.parse(row.params));
   const viewer=menus[0],contributor=menus[1];
-  assert.deepEqual(viewer.reply_markup.inline_keyboard[0].map(b=>b.text),['Get all media (1)','Get new media (1)']);
-  assert.equal(viewer.reply_markup.inline_keyboard[1][0].web_app.url,`https://example.test/app?gallery=${f.album.id}`);
-  assert.ok(!JSON.stringify(viewer).includes(f.album.uploadToken));assert.ok(!JSON.stringify(viewer).includes('media-add:'));
-  assert.ok(JSON.stringify(contributor).includes('media-add:'));assert.ok(JSON.stringify(contributor).includes(f.album.uploadToken));
-  assert.ok(JSON.stringify(viewer).includes('Follow: On'));assert.ok(JSON.stringify(contributor).includes('Follow: On'));
+  assert.deepEqual(viewer.reply_markup.inline_keyboard[1].map(b=>b.text),['Get all (1)','Get new (1)']);
+  assert.equal(viewer.reply_markup.inline_keyboard[0][0].web_app.url,`https://example.test/app?gallery=${f.album.id}`);
+  assert.ok(!JSON.stringify(viewer).includes(f.album.uploadToken));assert.ok(JSON.stringify(viewer).includes('media-add:'));
+  assert.ok(JSON.stringify(contributor).includes('media-add:'));assert.ok(!JSON.stringify(contributor).includes(f.album.uploadToken));
+  assert.ok(JSON.stringify(viewer).includes('Follow On'));assert.ok(JSON.stringify(contributor).includes('Follow On'));
 });
 
 test('photo links follow by default, deliver new uploads and preserve saved Off on reopening either link',async t=>{
@@ -228,4 +228,40 @@ test('an unconfirmed single send is blocked at the Mini App API until explicit r
   const response=await mediaApi(new Request(path,{method:'POST'}),f.env,{id:2});
   assert.equal(response.status,409);assert.match((await response.json()).error,/unconfirmed/);
   assert.equal(f.requests.length,1);
+});
+
+test('document and audio files use compatible native groups of up to ten',async t=>{
+  const f=batchFixture(t,[...Array(11).fill('document'),...Array(2).fill('audio')]);
+  await f.cb(2,'media-get','all');await drainOutbox(f.env);
+  assert.deepEqual(f.requests.map(r=>r.method),['sendMediaGroup','sendDocument','sendMediaGroup']);
+  assert.deepEqual(f.requests.filter(r=>r.params.media).map(r=>r.params.media.map(file=>file.type)),[Array(10).fill('document'),Array(2).fill('audio')]);
+  assert.equal(f.state(2).received.length,13);
+});
+test('legacy queued document rows are grouped from their current authorized media type without resetting receipts',async t=>{
+  const f=batchFixture(t,Array(21).fill('document'));
+  await f.cb(2,'media-get','all');
+  // Recreate the durable shape observed in the live pre-upgrade backlog.
+  f.db.prepare("DELETE FROM outbox WHERE method IN ('sendMediaGroup','sendDocument')").run();
+  const state=f.state(2);
+  for(const file of f.album.media){const tracking={event:f.album.id,media:file.id,user:2,token:state.pending[file.id],grant:f.album.viewToken};f.db.prepare('INSERT INTO outbox(id,method,params) VALUES (?,?,?)').run('fictional-legacy-'+file.id,'sendDocument',JSON.stringify({chat_id:2,document:file.fileId,__mediaDelivery:tracking}));}
+  await drainOutbox(f.env);assert.deepEqual(f.requests.map(r=>r.method),['sendMediaGroup','sendMediaGroup','sendDocument']);assert.equal(f.state(2).received.length,21);
+});
+test('Cancel during an in-flight album preserves its receipt, stops later batches and permits Get new without duplicates',async t=>{
+  const f=batchFixture(t,Array(21).fill('photo'));await f.cb(2,'media-get','all');
+  let enter,release;const entered=new Promise(resolve=>enter=resolve),gate=new Promise(resolve=>release=resolve);
+  const originalFetch=globalThis.fetch;let once=true;
+  t.mock.method(globalThis,'fetch',async(...args)=>{if(once && args[0].endsWith('/sendMediaGroup')){once=false;enter();await gate;}return originalFetch(...args);});
+  const sending=drainOutbox(f.env);await entered;
+  const generation=f.state(2).deliveryGeneration;
+  await f.cb(2,'media-cancel',String(generation));release();await sending;
+  assert.equal(f.requests.length,1);assert.equal(f.state(2).received.length,10);assert.equal(Object.keys(f.state(2).pending).length,0);
+  await f.cb(2,'media-get','new');await drainOutbox(f.env);
+  const files=f.requests.flatMap(r=>r.params.media?r.params.media.map(x=>x.media):[r.params.photo]);assert.equal(files.length,21);assert.equal(new Set(files).size,21);assert.equal(f.state(2).received.length,21);
+});
+test('Cancel is scoped to one recipient and stale Cancel buttons cannot stop a later delivery',async t=>{
+  const f=batchFixture(t,['photo','photo']);await f.cb(2,'media-get','all');await f.cb(3,'media-get','all');
+  const old=f.state(2).deliveryGeneration;await f.cb(2,'media-cancel',String(old));await drainOutbox(f.env);
+  assert.equal(f.state(2).received.length,0);assert.equal(f.state(3).received.length,2);
+  await f.cb(2,'media-get','new');assert.notEqual(f.state(2).deliveryGeneration,old);
+  await f.cb(2,'media-cancel',String(old));await drainOutbox(f.env);assert.equal(f.state(2).received.length,2);
 });

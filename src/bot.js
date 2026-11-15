@@ -1,10 +1,11 @@
+import {albumMain,albumMenuCallback} from './album-menu.js';
 import {paymentMethod,paidEvent} from './event-payment.js';
 import {qrPhoto} from './telegram-upload.js';
 import {albumMembers} from './album-members.js';
 import {changeAlbumAccess} from './album-access.js';
 import {leaveAlbum,removeInvitation} from './stuff.js';
 import {uploadedMedia,mediaMethods,mediaPayload} from './media-preview.js';
-import {mediaDeliveryState,queueMedia,queueMediaFiles,refreshMedia,notifyMediaFollowers} from './media-delivery.js';
+import {mediaDeliveryState,queueMedia,queueMediaFiles,refreshMedia,cancelMedia,notifyMediaFollowers} from './media-delivery.js';
 import {startBroadcast,toggleBroadcast,collectBroadcast,sendBroadcast,undoBroadcast} from './guest-messages.js';
 import {invitationMode,claimInvitation,invitationSettings,invitationParticipantMode,oneTimeInvites,invitationAvailable,consumeInvitation,reconcileInvitationClaims} from './invitations.js';
 import {isManager,cohostEntries,cohostIds,cohostGuard,cohostLink,createCohostInvite,revokeCohost,claimCohost} from './cohosts.js';
@@ -124,24 +125,7 @@ export class Bot {
   async mediaCard(id, e) {
     if (!this.mediaAllowed(e, id) || e.cancelled) return this.home(id, 'This media link is unavailable.');
     const rows=[];
-    if(e.kind==='photos'){
-      const state=mediaDeliveryState(this.db,id,e.id),received=new Set(state.received);
-      rows.push([button(`Get all media (${e.media.length})`,`media-get:${e.id}:all`),button(`Get new media (${e.media.filter(file=>!received.has(file.id)).length})`,`media-get:${e.id}:new`)]);
-      const unknown=Object.entries(state.uncertain || {}).filter(([mid,token])=>state.pending[mid]===token).length;
-      if(unknown)rows.push([button(`Review unconfirmed deliveries (${unknown})`,`media-retry:${e.id}:review`)]);
-      const browse=[];
-      if(this.appUrl)browse.push(this.miniButton('See media on the app',`?gallery=${e.id}`));
-      if(this.mediaCan(e,id,'uploadMedia'))browse.push(button('Add media',`media-add:${e.id}`));
-      if(browse.length)rows.push(browse);
-      const links=photoLinks(e,this.username),copies=[];
-      if(links?.viewer)copies.push({text:'Copy viewer link',copy_text:{text:links.viewer}});
-      if(links?.contributor && this.mediaCan(e,id,'uploadMedia'))copies.push({text:'Copy contributor link',copy_text:{text:links.contributor}});
-      if(copies.length)rows.push(copies);
-      rows.push([button(`Follow: ${state.follow?'On':'Off'}`,`media-follow:${e.id}:${state.follow?'off':'on'}`),button(menu.home,'nav:home')]);
-      if(e.owner===id)rows.push([button(showsUploaders(e)?'Uploader names: shown · Hide':'Uploader names: hidden · Show',`photo-names:${e.id}`),button('Viewers & contributors',`album-members:${e.id}`)],[button('Danger zone',`album-danger:${e.id}`)]);
-      else rows.push([button('Leave media album',`album-leave:${e.id}`)]);
-      return this.send(id,e.title,keyboard(...rows));
-    }
+    if(e.kind==='photos')return albumMain(this,id,e);
     if (this.mediaCan(e,id,'uploadMedia')) rows.push([button('📎 Add media',`media-add:${e.id}`)]);
     if (this.appUrl && this.mediaCan(e,id,'viewMedia')) rows.push([this.miniButton('🗂 Shared media',`?gallery=${e.id}`)]);
     if (!this.appUrl && this.mediaCan(e,id,'viewMedia')) rows.push([button('🗂 Shared media',`m:${e.id}:0`)]);
@@ -654,7 +638,9 @@ export class Bot {
     const [action, eid, arg, version] = (q.data || '').split(':');
     const e = this.db.events[eid];
     if(q.id)await this.api('answerCallbackQuery', { callback_query_id: q.id,...(action==='upload-status'?{__uploadNotice:true}:{}) }).catch(() => {});
+    if(action==='media-cancel')return cancelMedia(this,id,e,arg);
     if(action==='upload-status')return this.uploadStatus(id,eid,q.message);
+    if(['album-share','album-share-set','album-more'].includes(action))return albumMenuCallback(this,id,e,action,arg);
     if(action==='media-get' || action==='media-follow' || action==='media-retry'){
       if(e?.kind!=='photos' || !this.mediaAllowed(e,id) || !this.mediaCan(e,id,'viewMedia'))return this.home(id,'This media link is unavailable.');
       const state=mediaDeliveryState(this.db,id,e.id);
@@ -662,7 +648,7 @@ export class Bot {
         const unknown=Object.entries(state.uncertain || {}).filter(([mid,token])=>state.pending[mid]===token).map(([mid])=>mid);
         if(!unknown.length)return refreshMedia(this,id);
         if(arg!=='confirm')return this.send(id,`Delivery of ${unknown.length} files is unconfirmed. Check your chat first. Retrying may send copies of files that already arrived.`,keyboard([button('Retry unconfirmed files',`media-retry:${e.id}:confirm`),button('Keep waiting',`v:${e.id}`)]));
-        for(const mid of unknown){delete state.pending[mid];delete state.uncertain[mid];}
+        for(const mid of unknown){delete state.pending[mid];delete state.uncertain[mid];if(state.cancelled)delete state.cancelled[mid];}
         const queued=await queueMediaFiles(this,id,e,e.media.filter(file=>unknown.includes(file.id)));
         return this.send(id,`${queued} files queued for an explicitly requested retry.`);
       }
@@ -674,7 +660,7 @@ export class Bot {
         if(!['all','new'].includes(arg))return this.mediaCard(id,e);
         const received=new Set(state.received),files=e.media.filter(file=>arg==='all' || !received.has(file.id));
         const queued=await queueMediaFiles(this,id,e,files);
-        await this.send(id,queued?`${queued} files queued for your Telegram chat.`:Object.keys(state.uncertain || {}).length?'Some deliveries are unconfirmed. Check your chat, then use Review unconfirmed deliveries if you want to retry.':files.length?'Your media is already queued. Please wait for delivery.':'No new media to send.');
+        await this.send(id,queued?`${queued} files queued for your Telegram chat.`:Object.keys(state.uncertain || {}).length?'Some deliveries are unconfirmed. Check your chat, then use Review unconfirmed deliveries if you want to retry.':files.length?'Your media is already queued. Please wait for delivery.':'No new media to send.',queued?keyboard([button('Cancel delivery',`media-cancel:${e.id}:${state.deliveryGeneration || 0}`)]):undefined);
       }
       return this.mediaCard(id,e);
     }
