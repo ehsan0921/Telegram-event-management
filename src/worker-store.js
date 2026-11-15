@@ -1,3 +1,4 @@
+import {flushProgress} from './media-progress-core.js';
 import { Bot } from './bot.js';
 import {readAlbumMembers} from './album-members.js';
 import {readOnlinePricing} from './exchange.js';
@@ -35,6 +36,7 @@ export async function mutateState(env, action, updateId) {
         settings.push(env.DB.prepare('INSERT INTO app_settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(key, value));
       }
     });
+    await flushProgress(bot);
     const batch = [env.DB.prepare('INSERT INTO commits(owner) VALUES (?)').bind(owner), ...settings];
     for (const kind of ['events', 'sessions', 'preferences']) {
       for (const [id, record] of Object.entries(data[kind])) {

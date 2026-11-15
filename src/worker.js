@@ -1,3 +1,4 @@
+import {drainProgress} from './media-progress.js';
 import { mutateState, BusyError } from './worker-store.js';
 import {telegramPayload} from './telegram-upload.js';
 import {broadcastRecord,broadcastReceipt,broadcastDeliveryResult} from './guest-messages.js';
@@ -67,6 +68,7 @@ export async function processUpdate(env, update) {
       if(await guardUpload(env,upload,bot,persist))return;
       return bot.handle(update);
     }, update.update_id);
+    if(user && (/^media-(get|retry):/.test(update.callback_query?.data || '') || /^(?:📊 |✖ Cancel #|\/refresh(?:@\w+)?(?:\s|$))/.test(update.message?.text?.trim() || '')))await drainProgress(env,user.id,telegram);
     return new Response('OK');
   } catch (e) {
     if (e instanceof BusyError) return new Response('Busy; retry', { status: 503 });
@@ -84,6 +86,7 @@ export function unavailablePhotoFallback(params, result) {
 }
 
 export async function drainOutbox(env, immediate=false, attempt=0) {
+  await drainProgress(env,undefined,telegram);
   const owner = crypto.randomUUID();
   const lock = await env.DB.prepare('INSERT INTO delivery_lease(id,owner,expires) VALUES (1,?,unixepoch()+60) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,expires=excluded.expires WHERE delivery_lease.expires<unixepoch() RETURNING owner').bind(owner).first();
   if (!lock) {
@@ -94,9 +97,14 @@ export async function drainOutbox(env, immediate=false, attempt=0) {
   try {
   deliveryLoop: do {
   const priority="CASE WHEN json_type(params,'$.__uploadNotice') IS NOT NULL THEN 0 ELSE 1 END";
-  const query=immediate ? `SELECT id,due FROM outbox WHERE due<=unixepoch() ORDER BY ${priority},CASE WHEN json_type(params,'$.__broadcastDelete') IS NOT NULL THEN 0 WHEN json_type(params,'$.__broadcastNotice') IS NOT NULL THEN 1 WHEN json_type(params,'$.__broadcast') IS NOT NULL THEN 2 ELSE 3 END,rowid LIMIT 20` : `SELECT id,due FROM outbox WHERE due<=unixepoch() ORDER BY ${priority},rowid LIMIT 20`;
+  const query=immediate ? `SELECT id,due FROM outbox WHERE due<=unixepoch() AND json_type(params,'$.__mediaProgress') IS NULL ORDER BY ${priority},CASE WHEN json_type(params,'$.__broadcastDelete') IS NOT NULL THEN 0 WHEN json_type(params,'$.__broadcastNotice') IS NOT NULL THEN 1 WHEN json_type(params,'$.__broadcast') IS NOT NULL THEN 2 ELSE 3 END,rowid LIMIT 20` : `SELECT id,due FROM outbox WHERE due<=unixepoch() AND json_type(params,'$.__mediaProgress') IS NULL ORDER BY ${priority},rowid LIMIT 20`;
   const { results } = await env.DB.prepare(query).all();
-  if(!results.length)break;
+  if(!results.length){
+    await drainProgress(env,undefined,telegram);
+    const soon=await env.DB.prepare("SELECT min(due) AS due FROM outbox WHERE json_type(params,'$.__mediaProgress') IS NOT NULL").first();
+    if(soon?.due && soon.due<=Math.floor(Date.now()/1000)+2 && Date.now()+300<deadline){await new Promise(resolve=>setTimeout(resolve,200));continue;}
+    break;
+  }
   for (const { id, due } of results) {
     if (Date.now() > deadline || due > Math.floor(Date.now() / 1000)) break deliveryLoop;
     const row = await env.DB.prepare('UPDATE outbox SET due=unixepoch()+60, attempts=attempts+1 WHERE id=? AND due<=unixepoch() RETURNING *').bind(id).first();
@@ -107,8 +115,9 @@ export async function drainOutbox(env, immediate=false, attempt=0) {
     if(grouped==='deferred')continue;
     if(grouped){
       const outcome=await deliverMediaGroup(env,row,telegram);
+      await drainProgress(env,undefined,telegram);
       if(outcome==='retry')break deliveryLoop;
-      continue;
+      continue deliveryLoop;
     }
     if(mediaTracking && !mediaDelivered){
       const current=await mutateState(env,(_data,bot)=>mediaDeliveryPayload(bot,mediaTracking));
@@ -252,6 +261,7 @@ export default {
     ctx.waitUntil(configureMiniApp(env));
     ctx.waitUntil((async () => {
       if (!await snapshotActive(env)) await mutateState(env, (data, bot) => bot.productionSnapshot ? undefined : sendDueReminders(data, bot));
+      await drainProgress(env,undefined,telegram);
       await drainOutbox(env);
     })().catch(error => { if (!(error instanceof BusyError)) console.error('reminder_processing_failed'); }));
     ctx.waitUntil(env.DB.prepare('DELETE FROM processed WHERE at < unixepoch()-604800').run());
