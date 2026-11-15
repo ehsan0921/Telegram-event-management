@@ -323,7 +323,7 @@ for(const size of [0,1,10,11,200])test('reply delivery keyboard counts confirmed
   const first=f.ui.find(r=>r.params.reply_markup?.keyboard);
   assert.ok(first);assert.equal(first.method,'sendMessage');assert.equal(first.params.reply_markup.inline_keyboard,undefined);
   assert.match(first.params.reply_markup.keyboard[0][0].text,new RegExp('Cancel · 0/'+size+'$'));
-  assert.equal(first.params.reply_markup.keyboard.length,1);assert.equal(first.params.reply_markup.keyboard[0].length,1);assert.equal(first.params.text,size?'…':'Nothing new to send.');assert.equal(first.params.disable_notification,true);
+  assert.equal(first.params.reply_markup.keyboard.length,1);assert.equal(first.params.reply_markup.keyboard[0].length,1);assert.equal(first.params.text,size?'Sending....':'Nothing new to send.');assert.equal(first.params.disable_notification,true);
   assert.equal(f.requests.length,0);
   const job=()=>Object.values(f.state(2).jobs)[0];
   assert.equal(job().notice.keyboardConfirmed,true);
