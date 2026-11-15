@@ -92,8 +92,8 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
         }
         body.append(element('strong',file.filename==='photo'?'Photo':file.filename),element('p',[file.name?'Shared by '+file.name:'',file.caption].filter(Boolean).join('\n'),'small muted'));
         const buttons=element('div','','event-actions');
-        const downloadButton=iconAction('⬇','Download',async()=>{if(downloadButton.disabled)return;downloadButton.disabled=true;try{await saveBlob(await mediaBlob(id,file.id),filename(file));}catch(error){notice(error.message);}finally{downloadButton.disabled=false;}});
-        const sendButton=iconAction('✈','Send to Telegram',async()=>{if(sendButton.disabled)return;sendButton.disabled=true;try{await sendFile(id,file);notice('Queued for your Telegram chat. Please wait for delivery.');}catch(error){notice(error.message);}finally{sendButton.disabled=false;}});
+        const downloadButton=iconAction('⬇','Download',async()=>{try{await saveBlob(await mediaBlob(id,file.id),filename(file));}catch(error){notice(error.message);}});
+        const sendButton=iconAction('✈','Send to Telegram',async()=>{try{await sendFile(id,file);notice('Queued for your Telegram chat. Please wait for delivery.');}catch(error){notice(error.message);}});
         buttons.append(downloadButton,sendButton);
         if(kind==='video')buttons.append(iconAction('▶','Play video',async()=>{const pending=++popupGeneration;try{const blob=await mediaBlob(id,file.id);if(current!==generation || pending!==popupGeneration)return;const url=URL.createObjectURL(blob);urls.add(url);showMedia(id,previewFile,blob,url);}catch(error){if(current===generation && pending===popupGeneration)notice(error.message);}}));
         body.append(buttons);card.append(body);list.append(card);

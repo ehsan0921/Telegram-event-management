@@ -33,7 +33,7 @@ test('existing bots update the short command menu even when their webhook and na
   const f = fixture(t);
   await configureMiniApp(f.env);
   assert.deepEqual(f.calls, [{ method: 'setMyCommands', commands: botCommands }]);
-  assert.deepEqual(botCommands.map(item => item.command), ['help', 'cancel', 'paysupport']);
+  assert.deepEqual(botCommands.map(item => item.command), ['start', 'refresh', 'help', 'cancel', 'paysupport']);
   assert.equal(f.settings.get('bot-commands'), botCommandsVersion);
   await configureMiniApp(f.env);
   assert.equal(f.calls.length, 1);
@@ -66,7 +66,7 @@ test('the test whitelist command appears only in the configured admin private ch
   await configureMiniApp(f.env);
   assert.equal(f.calls.length, 1);
   assert.deepEqual(f.calls[0].scope, { type: 'chat', chat_id: 900000001 });
-  assert.deepEqual(f.calls[0].commands.map(item => item.command), ['help', 'cancel', 'paysupport', 'whitelist']);
+  assert.deepEqual(f.calls[0].commands.map(item => item.command), ['start', 'refresh', 'help', 'cancel', 'paysupport', 'whitelist']);
   await configureMiniApp(f.env);
   assert.equal(f.calls.length, 1);
   f.env.TEST_WHITELIST_ENABLED = 'false';

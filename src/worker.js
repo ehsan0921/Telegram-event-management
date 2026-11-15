@@ -12,6 +12,7 @@ import { handleWhitelistCommand, mayUseTestApp, testAccessMessage } from './test
 import { snapshotActive, snapshotDeliveryAllowed } from './snapshot-mode.js';
 import {mediaDeliveryPayload,mediaDeliveryResult} from './media-delivery.js';
 import {registerUpload,guardUpload} from './upload-processing.js';
+import {deliverMediaGroup,prepareMediaGroup} from './media-group.js';
 
 export async function authorized(request, secret) {
   if (!secret) return false;
@@ -102,6 +103,13 @@ export async function drainOutbox(env, immediate=false, attempt=0) {
     if (!row) continue;
     const {__mediaDelivery:mediaTracking,__mediaDelivered:mediaDelivered,__broadcast:tracking,__broadcastDelete:deletion,__broadcastNotice,__broadcastDelivered:delivered,...deliveryParams}=JSON.parse(row.params);
     try{
+    const grouped=await prepareMediaGroup(env,row);
+    if(grouped==='deferred')continue;
+    if(grouped){
+      const outcome=await deliverMediaGroup(env,row,telegram);
+      if(outcome==='retry')break deliveryLoop;
+      continue;
+    }
     if(mediaTracking && !mediaDelivered){
       const current=await mutateState(env,(_data,bot)=>mediaDeliveryPayload(bot,mediaTracking));
       if(!current){await mutateState(env,data=>mediaDeliveryResult(data,mediaTracking,false));await env.DB.prepare('DELETE FROM outbox WHERE id=?').bind(id).run();continue;}

@@ -121,3 +121,111 @@ test('follow sends new uploads with notification, stops before delivery when swi
   await f.cb(2,'media-follow','on');const album=f.read('events',f.album.id);album.showUploaders=false;f.save('events',album.id,album);
   await f.upload();await drainOutbox(f.env);photos=f.sent.filter(row=>row.method==='sendPhoto');assert.equal(photos.length,2);assert.doesNotMatch(photos[1].caption,/Shared by/);
 });
+
+function batchFixture(t,types){
+  const f=fixture(t);f.mode='success';f.requests=[];
+  f.album.media=types.map((type,index)=>({id:(index+1).toString(16).padStart(12,'0'),type,fileId:'fictional-'+index,name:'Fictional uploader',by:1}));
+  f.save('events',f.album.id,f.album);
+  t.mock.method(globalThis,'fetch',async(url,options)=>{
+    const method=new URL(url).pathname.split('/').at(-1),params=JSON.parse(options.body);
+    assert.ok(!Object.keys(params).some(key=>key.startsWith('__')));
+    if(!['sendMediaGroup','sendPhoto','sendVideo','sendDocument','sendVoice'].includes(method))return Response.json({ok:true,result:{message_id:9000}});
+    f.requests.push({method,params});
+    if(f.mode==='timeout')throw Error('Fictional timeout');
+    if(f.mode==='429')return Response.json({ok:false,error_code:429,parameters:{retry_after:7}});
+    if(f.mode==='400')return Response.json({ok:false,error_code:400});
+    const messages=(params.media || [params]).map((_,index)=>({message_id:f.requests.length*100+index+1,chat:{id:params.chat_id}}));
+    return Response.json({ok:true,result:f.mode==='partial'?messages.slice(1):method==='sendMediaGroup'?messages:messages[0]});
+  });
+  return f;
+}
+
+test('200 photos queue and deliver as twenty ordered albums with existing file IDs',async t=>{
+  const f=batchFixture(t,Array(200).fill('photo')),start=performance.now();
+  await f.cb(2,'media-get','all');const queuedAt=performance.now();
+  assert.equal(f.db.prepare("SELECT count(*) AS n FROM outbox WHERE method='sendMediaGroup'").get().n,20);
+  await drainOutbox(f.env);const deliveredAt=performance.now();
+  assert.equal(f.requests.length,20);assert.ok(f.requests.every(r=>r.method==='sendMediaGroup' && r.params.media.length===10));
+  assert.deepEqual(f.requests.flatMap(r=>r.params.media.map(item=>item.media)),f.album.media.map(file=>file.fileId));
+  assert.equal(f.state(2).received.length,200);assert.equal(Object.keys(f.state(2).pending).length,0);
+  console.log(JSON.stringify({syntheticMediaStages:{files:200,enqueueMs:Math.round((queuedAt-start)*100)/100,drainMs:Math.round((deliveredAt-queuedAt)*100)/100,telegramRequests:20,telegramNetwork:'mocked',physicalWebView:false}}));
+});
+
+test('mixed media preserves order and falls back to native sends for unsupported album types and remainders',async t=>{
+  const f=batchFixture(t,['photo','video','document','voice','photo']);
+  await f.cb(2,'media-get','all');await drainOutbox(f.env);
+  assert.deepEqual(f.requests.map(r=>r.method),['sendMediaGroup','sendDocument','sendVoice','sendPhoto']);
+  assert.deepEqual(f.requests[0].params.media.map(item=>item.type),['photo','video']);
+  assert.equal(f.state(2).received.length,5);
+});
+
+test('album delivery rechecks per-file removal and revoked viewing access before sending',async t=>{
+  const f=batchFixture(t,['photo','photo','photo']);await f.cb(2,'media-get','all');
+  f.album.media.splice(1,1);f.save('events',f.album.id,f.album);await drainOutbox(f.env);
+  assert.equal(f.requests[0].params.media.length,2);assert.equal(f.state(2).received.length,2);
+  await f.cb(2,'media-get','all');f.save('preferences',2,{mediaAccess:{}});await drainOutbox(f.env);
+  assert.equal(f.requests.length,1);
+});
+
+test('rate-limited first album delays later albums for that recipient and preserves order on retry',async t=>{
+  const f=batchFixture(t,Array(21).fill('photo'));f.mode='429';
+  await f.cb(2,'media-get','all');await drainOutbox(f.env);assert.equal(f.requests.length,1);
+  await drainOutbox(f.env);assert.equal(f.requests.length,1);
+  assert.equal(f.state(2).received.length,0);assert.equal(Object.keys(f.state(2).pending).length,21);
+  f.mode='success';f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);
+  assert.equal(f.state(2).received.length,21);
+  assert.deepEqual(f.requests.slice(1).flatMap(r=>r.params.media?r.params.media.map(x=>x.media):[r.params.photo]),f.album.media.map(file=>file.fileId));
+});
+
+for(const mode of ['timeout','partial'])test(`${mode} album outcome is unconfirmed and cannot be blindly resent`,async t=>{
+  const f=batchFixture(t,['photo','photo']);f.mode=mode;
+  await f.cb(2,'media-get','all');await drainOutbox(f.env);
+  assert.equal(f.requests.length,1);assert.equal(f.state(2).received.length,0);
+  assert.equal(Object.keys(f.state(2).uncertain).length,2);
+  await drainOutbox(f.env);await f.cb(2,'media-get','new');await drainOutbox(f.env);assert.equal(f.requests.length,1);
+  await f.cb(2,'media-retry','review');await drainOutbox(f.env);assert.equal(f.requests.length,1);
+  const messages=f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage'").all();
+  assert.ok(messages.every(row=>!JSON.parse(row.params).text.includes('all delivered')));
+  f.mode='success';await f.cb(2,'media-retry','confirm');await drainOutbox(f.env);
+  assert.equal(f.requests.length,2);assert.equal(f.state(2).received.length,2);
+});
+
+test('known album rejection leaves each file new; successful receipt persistence retries never resend',async t=>{
+  const f=batchFixture(t,['photo','photo']);f.mode='400';
+  await f.cb(2,'media-get','all');await drainOutbox(f.env);
+  assert.equal(f.state(2).received.length,0);assert.deepEqual(f.state(2).pending,{});
+  f.mode='success';await f.cb(2,'media-get','new');
+  const batch=f.env.DB.batch;let fail=true;
+  f.env.DB.batch=async statements=>{if(fail && statements.some(s=>s.args.some(value=>typeof value==='string' && value.includes('"received":["')))){fail=false;throw Error('Fictional receipt commit failure');}return batch(statements);};
+  await assert.rejects(drainOutbox(f.env),/receipt commit failure/);assert.equal(f.requests.length,2);
+  f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);assert.equal(f.requests.length,2);assert.equal(f.state(2).received.length,2);
+});
+
+test('a crash after attempting an album is not replayed when its API receipt could not be persisted',async t=>{
+  const f=batchFixture(t,['photo','photo']);await f.cb(2,'media-get','all');
+  const prepare=f.env.DB.prepare;let fail=true;
+  f.env.DB.prepare=sql=>{const statement=prepare(sql);if(sql==='UPDATE outbox SET params=? WHERE id=?'){
+    const run=statement.run;statement.run=async()=>{if(fail && statement.args[0]?.includes('__mediaGroupDelivered')){fail=false;throw Error('Fictional receipt persistence interruption');}return run.call(statement);};
+  }return statement;};
+  await assert.rejects(drainOutbox(f.env),/receipt persistence interruption/);
+  f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);
+  assert.equal(f.requests.length,1);assert.equal(f.state(2).received.length,0);assert.equal(Object.keys(f.state(2).uncertain).length,2);
+});
+
+test('/refresh preserves upload input and never queues or resends media',async t=>{
+  const f=batchFixture(t,['photo','photo']);
+  const update=id=>({update_id:id,message:{chat:{id:2,type:'private'},from:{id:2},text:'/refresh'}});
+  await processUpdate(f.env,update(5000));await drainOutbox(f.env);assert.equal(f.requests.length,0);
+  f.save('sessions',2,{event:f.album.id,step:'upload',uploadBatch:'fictional-batch'});
+  await processUpdate(f.env,update(5001));await drainOutbox(f.env);
+  assert.equal(f.read('sessions',2).step,'upload');assert.equal(f.requests.length,0);
+});
+
+test('an unconfirmed single send is blocked at the Mini App API until explicit review',async t=>{
+  const f=batchFixture(t,['photo']);f.mode='timeout';
+  const path=`https://fictional.test/api/events/${f.album.id}/media/${f.album.media[0].id}/send`;
+  await mediaApi(new Request(path,{method:'POST'}),f.env,{id:2});await drainOutbox(f.env);
+  const response=await mediaApi(new Request(path,{method:'POST'}),f.env,{id:2});
+  assert.equal(response.status,409);assert.match((await response.json()).error,/unconfirmed/);
+  assert.equal(f.requests.length,1);
+});
