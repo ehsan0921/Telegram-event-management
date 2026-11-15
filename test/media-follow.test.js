@@ -44,7 +44,7 @@ test('viewer and contributor menus share layout while viewers never receive cont
   assert.equal(viewer.reply_markup.inline_keyboard[0][0].web_app.url,`https://example.test/app?gallery=${f.album.id}`);
   assert.ok(!JSON.stringify(viewer).includes(f.album.uploadToken));assert.ok(JSON.stringify(viewer).includes('media-add:'));
   assert.ok(JSON.stringify(contributor).includes('media-add:'));assert.ok(!JSON.stringify(contributor).includes(f.album.uploadToken));
-  assert.ok(JSON.stringify(viewer).includes('Follow On'));assert.ok(JSON.stringify(contributor).includes('Follow On'));
+  assert.ok(JSON.stringify(viewer).includes('Follow:ON'));assert.ok(JSON.stringify(contributor).includes('Follow:ON'));
 });
 
 test('photo links follow by default, deliver new uploads and preserve saved Off on reopening either link',async t=>{

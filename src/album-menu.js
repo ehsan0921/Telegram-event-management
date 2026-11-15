@@ -10,7 +10,7 @@ export function albumMain(bot,id,e){
     [bot.appUrl?bot.miniButton('Open album app',`?gallery=${e.id}`):button('Open album app',`m:${e.id}:0`)],
     [button(`Get all (${e.media.length})`,`media-get:${e.id}:all`),button(`Get new (${e.media.filter(file=>!received.has(file.id)).length})`,`media-get:${e.id}:new`)],
     [button('Add media',`media-add:${e.id}`),button('Share',`album-share:${e.id}`)],
-    [button(`Follow ${state.follow?'On':'Off'}`,`media-follow:${e.id}:${state.follow?'off':'on'}`),button('More',`album-more:${e.id}`)]
+    [button(`Follow:${state.follow?'ON':'OFF'}`,`media-follow:${e.id}:${state.follow?'off':'on'}`),button('More',`album-more:${e.id}`)]
   ];
   if(Object.entries(state.pending).some(([mid,token])=>state.cancelled?.[mid]!==token && state.uncertain?.[mid]!==token))rows.push([button('Cancel delivery',`media-cancel:${e.id}:${state.deliveryGeneration || 0}`)]);
   return bot.send(id,e.title,keyboard(rows));
