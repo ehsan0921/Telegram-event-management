@@ -48,10 +48,25 @@ export async function registerUpload(env,update,user,sendReceipt){
 export async function guardUpload(env,context,bot,persist){
   if(!context)return false;
   const {id,finish,media,updateId}=context;
-  if(media)persist("DELETE FROM records WHERE kind='upload_pending' AND id=?",String(updateId));
+  if(media){
+    const pending=await read(env,'upload_pending',updateId),session=bot.db.sessions[id];
+    persist("DELETE FROM records WHERE kind='upload_pending' AND id=?",String(updateId));
+    const batch=session?.step==='upload' ? session.uploadBatch || `legacy:${session.event}` : null;
+    if(pending && pending.batch!==batch){
+      await bot.send(Number(id),'This upload session has changed. This file was not added to another album. Open the correct album and use Add media to send it again.');
+      return true;
+    }
+  }
   // Re-read under the state lease: another ingress may have registered Finish.
   const job=await read(env,'upload_finish',id);
   if(job && !job.closed){
+    const session=bot.db.sessions[id];
+    const batch=session?.step==='upload' ? session.uploadBatch || `legacy:${session.event}` : null;
+    if(batch!==job.batch || session.event!==job.event){
+      persist("UPDATE records SET data=json_set(data,'$.closed',1) WHERE kind='upload_finish' AND id=?",id);
+      if(finish){await bot.home(Number(id),'This upload session has changed. Check your saved files in My stuff.');return true;}
+      return false;
+    }
     if(finish){
       const pending=await env.DB.prepare("SELECT id FROM records WHERE kind='upload_pending' AND json_extract(data,'$.user')=? AND json_extract(data,'$.batch')=? AND CAST(id AS INTEGER)<? LIMIT 1").bind(id,job.batch,job.updateId).first();
       if(pending)throw new BusyError('Uploads are still being saved.');

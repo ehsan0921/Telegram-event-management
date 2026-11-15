@@ -100,3 +100,23 @@ test('completion reflects files still stored if media was removed during the bat
   const stored=f.read('events',album.id);stored.media.pop();f.save('events',album.id,stored);
   await f.finish(3);assert.match(f.messages()[0].text,/1 saved in this upload/);
 });
+
+test('revoked or replaced upload sessions do not leave Finish blocking the user',async t=>{
+  const f=fixture(t);f.album();f.failCommit=true;
+  await assert.rejects(f.photo(1),/Fictional failed save/);f.failCommit=false;
+  assert.equal((await f.finish(2)).status,503);
+  f.db.prepare("DELETE FROM records WHERE kind='sessions' AND id='1'").run();
+  await f.message(3,'/new');
+  assert.ok(f.read('upload_finish',1).closed);
+  assert.ok(f.read('sessions',1));
+  assert.ok(f.messages().every(m=>!m.text?.includes('Uploads finished')));
+});
+
+test('retry of an old failed photo cannot be saved into a newly selected album',async t=>{
+  const f=fixture(t),first=f.album();f.failCommit=true;
+  await assert.rejects(f.photo(1),/Fictional failed save/);f.failCommit=false;
+  const next=f.album(1,'new-batch');await f.photo(1);
+  assert.equal(f.read('events',first.id).media.length,0);
+  assert.equal(f.read('events',next.id).media.length,0);
+  assert.match(f.messages()[0].text,/not added to another album/);
+});
