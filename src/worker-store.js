@@ -30,6 +30,7 @@ export async function mutateState(env, action, updateId) {
     bot.pricing=await readOnlinePricing(env,data.preferences._pricing);
     const settings = [];
     const value = await action(data, bot, {
+      persist(sql, ...args) { settings.push(env.DB.prepare(sql).bind(...args)); },
       setAppSetting(key, value) {
         settings.push(env.DB.prepare('INSERT INTO app_settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(key, value));
       }

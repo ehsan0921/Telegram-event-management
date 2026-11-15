@@ -11,6 +11,7 @@ import { botCommands, botCommandsVersion } from './telegram-menu.js';
 import { handleWhitelistCommand, mayUseTestApp, testAccessMessage } from './test-access.js';
 import { snapshotActive, snapshotDeliveryAllowed } from './snapshot-mode.js';
 import {mediaDeliveryPayload,mediaDeliveryResult} from './media-delivery.js';
+import {registerUpload,guardUpload} from './upload-processing.js';
 
 export async function authorized(request, secret) {
   if (!secret) return false;
@@ -49,24 +50,20 @@ export async function processUpdate(env, update) {
     if (whitelistResponse) return whitelistResponse;
     // A transient receipt is deliberately outside the state lease and delivery
     // queue. Only the durable outbox may confirm that saving has succeeded.
-    let uploadReceipt;
-    if(user && !user.is_bot && update.message?.chat?.type==='private' && /^(?:✅ Finish uploads|\/done(?:@\w+)?(?:\s.*)?)$/.test(update.message.text?.trim() || '')) {
-      const receipt=await telegram(env,'sendMessage',{chat_id:user.id,text:'⏳ Finish uploads received. Please wait while your saved uploads are checked. Tap Refresh if the confirmation has not arrived yet.',reply_markup:{inline_keyboard:[[{text:'↻ Refresh',callback_data:'upload-status'}]]}},1500);
-      if(receipt.ok)uploadReceipt=receipt.result;
-    }
+    const upload=await registerUpload(env,update,user,(id,text)=>telegram(env,'sendMessage',{chat_id:id,text,reply_markup:{inline_keyboard:[[{text:'↻ Refresh',callback_data:'upload-status'}]]}},1500));
     if (update.pre_checkout_query) {
       const decision = await mutateState(env, (data, bot) => checkout(bot, update.pre_checkout_query));
       const result = await telegram(env, 'answerPreCheckoutQuery', decision);
       return new Response(result.ok ? 'OK' : 'Retry', {status: result.ok ? 200 : 503});
     }
     if (user) await rememberUser(env, user);
-    await mutateState(env, async (data, bot) => {
+    await mutateState(env, async (data, bot, {persist}) => {
       if (user && !update.message?.successful_payment && !update.message?.refunded_payment && !await mayUseTestApp(env, user)) {
         return update.callback_query
           ? bot.api('answerCallbackQuery', { callback_query_id: update.callback_query.id, text: testAccessMessage, show_alert: true })
           : bot.send(update.message.chat.id, testAccessMessage);
       }
-      bot.uploadReceipt=uploadReceipt;
+      if(await guardUpload(env,upload,bot,persist))return;
       return bot.handle(update);
     }, update.update_id);
     return new Response('OK');

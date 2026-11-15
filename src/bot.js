@@ -92,8 +92,8 @@ export class Bot {
   }
   hasPending(id) { return Object.values(this.db.events).some(e => !this.db.preferences[id]?.hiddenEvents?.[e.id] && this.allowed(e,id) && !isManager(e,id) && invitationMode(e)!=='tickets' && !e.cancelled && e.guests[id]?.status === 'later'); }
   home(id, text = 'Welcome to XEvents 🎉\nTap Create to make an event or media album, or My stuff to find yours.',immediate=false) { return this.api('sendMessage',{chat_id:id,text,reply_markup:homeKeyboard(),...(immediate?{__broadcastNotice:true}:{})}); }
-  session(id, value) { if (value) this.db.sessions[id] = value; else delete this.db.sessions[id]; }
-  uploadStatus(id, eid, message=this.uploadReceipt) {
+  session(id, value) { if (value) { if(value.step==='upload')value.uploadBatch ||= randomBytes(8).toString('hex');this.db.sessions[id] = value; } else delete this.db.sessions[id]; }
+  uploadStatus(id, eid, message=this.uploadReceipt, saved) {
     const session=this.db.sessions[id];
     eid ||= session?.step==='upload' ? session.event : this.db.preferences[id]?.lastUploadEvent;
     const e=this.db.events[eid];
@@ -103,9 +103,9 @@ export class Bot {
     const rows=[[button('↻ Refresh',`upload-status:${eid}`)]];
     if(this.mediaCan(e,id,'uploadMedia'))rows.push([button('📎 Add media',`media-add:${eid}`)]);
     if(this.mediaCan(e,id,'viewMedia') && this.appUrl)rows.push([this.miniButton('🗂 Shared media',`?gallery=${eid}`)]);
-    rows.push([button('Back',`v:${eid}`)]);
+    rows.push([button('Back',`v:${eid}`),button(menu.home,'nav:home')]);
     const edit=message?.chat?.id===id && Number.isSafeInteger(message.message_id) && message.message_id>0;
-    return this.api(edit?'editMessageText':'sendMessage',{chat_id:id,...(edit?{message_id:message.message_id}:{}),text:`${e.title}\n${uploading?'⏳ Uploads are still being received. Please wait, then tap Finish uploads.':'✅ Uploads finished.'}\n${count} of your files saved.\n${uploading?'Wait for Telegram to finish sending your files. Refresh to check the latest saved count.':'Your saved files are ready. If a file is missing, tap Add media to send it again.'}`,reply_markup:keyboard(...rows),__uploadNotice:true});
+    return this.api(edit?'editMessageText':'sendMessage',{chat_id:id,...(edit?{message_id:message.message_id}:{}),text:`${e.title}\n${uploading?'⏳ Uploads are still being received. Please wait, then tap Finish uploads.':`✅ Uploads finished.${saved===undefined?'':` ${saved} saved in this upload.`}`}\n${count} of your files saved.\n${uploading?'Wait for Telegram to finish sending your files. Refresh to check the latest saved count.':'Only files received and saved are counted. If a file is missing, tap Add media to send it again.'}`,reply_markup:keyboard(...rows),__uploadNotice:true});
   }
   link(e) { return `https://t.me/${this.username}?start=e_${e.id}`; }
   miniButton(text, params = '') { return { text, web_app: { url: this.appUrl + params } }; }
@@ -531,12 +531,15 @@ export class Bot {
       if (command === '/done') {
         this.session(id);
         this.db.preferences[id] ||= {};this.db.preferences[id].lastUploadEvent=e.id;
-        await this.api('sendMessage',{chat_id:id,text:`✅ Uploads finished${s.uploads ? ': ' + s.uploads + ' saved' : ''}.`,reply_markup:homeKeyboard(),__uploadNotice:true});
+        const own=e.media.filter(file=>file.by===id);
+        const saved=s.uploadBatch ? own.filter(file=>file.uploadBatch===s.uploadBatch).length : undefined;
+        if(this.durableMediaDelivery)return this.uploadStatus(id,e.id,this.uploadReceipt,saved);
+        await this.api('sendMessage',{chat_id:id,text:`✅ Uploads finished: ${saved===undefined?own.length+' of your files saved in this collection':saved+' saved in this upload'}. Only files received and saved are counted. If any are missing, use Add media to send them again.`,reply_markup:homeKeyboard(),__uploadNotice:true});
         return this.uploadStatus(id,e.id);
       }
       const media = uploadedMedia(m);
       if (!media) return this.prompt(id, 'Send a photo, video, or file. Tap Finish uploads when finished.');
-      e.media.push({ id: randomBytes(6).toString('hex'), type: media.type, fileId: media.file.file_id, mimeType:media.file.mime_type || null,thumbnail:media.file.thumbnail?.file_id || media.file.thumb?.file_id || null,size: media.file.file_size || null, filename: media.file.file_name || media.type, caption: clean(m.caption, 700), by: id, name: g?.name || name(m.from), at: new Date().toISOString() });
+      e.media.push({ id: randomBytes(6).toString('hex'), uploadBatch:s.uploadBatch, type: media.type, fileId: media.file.file_id, mimeType:media.file.mime_type || null,thumbnail:media.file.thumbnail?.file_id || media.file.thumb?.file_id || null,size: media.file.file_size || null, filename: media.file.file_name || media.type, caption: clean(m.caption, 700), by: id, name: g?.name || name(m.from), at: new Date().toISOString() });
       e.mediaUpdatedAt=e.media.at(-1).at;
       s.uploads = (s.uploads || 0) + 1;
       await notifyMediaFollowers(this,e,e.media.at(-1));
@@ -894,6 +897,7 @@ export class Bot {
     }
     if (action === 'u') { this.session(id, { event: eid, step: 'upload' }); return this.prompt(id, `Send photos, videos, or files for this event. ${permissions(e).viewMedia ? 'Guests can view the shared collection.' : 'The shared collection is private to the organiser.'} Tap Finish uploads when finished.`); }
     if (action === 'm') {
+      if(!this.mediaCan(e,id,'viewMedia'))return this.send(id,'The organiser has not enabled the gallery for guests.');
       if (this.appUrl) return this.send(id, 'Open Shared media to view, save, or send files to your Telegram chat.', keyboard([this.miniButton('🗂 Shared media', `?gallery=${eid}`)]));
       const page = Number(arg);
       if (!Number.isSafeInteger(page) || page < 0) return;

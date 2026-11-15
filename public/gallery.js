@@ -3,6 +3,14 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
   let generation=0;
   let popupGeneration=0,qrGeneration=0;
   const urls = new Set();
+  const downloads=new Map(),sends=new Map(),waiting=[];
+  let activeDownloads=0,mediaController=new AbortController();
+  function resetDownloads(){mediaController.abort();mediaController=new AbortController();downloads.clear();}
+  function sendFile(id,file){
+    const key=`${id}/${file.id}`;
+    if(!sends.has(key))sends.set(key,api(`events/${id}/media/${file.id}/send`,{}).finally(()=>sends.delete(key)));
+    return sends.get(key);
+  }
   const filename = file => file.filename==='photo'?'photo.jpg':file.filename==='video'?'video.mp4':file.filename;
   function iconAction(icon,label,onclick){
     const button=action(label,onclick),symbol=element('span',icon+' ');
@@ -19,16 +27,39 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
     $('media-popup-status').textContent='';
     $('media-save').onclick=()=>saveBlob(blob,filename(file));
     const showing=popupGeneration;
-    $('media-send').onclick=async()=>{ $('media-send').disabled=true; try { await api(`events/${id}/media/${file.id}/send`,{}); if(showing===popupGeneration)$('media-popup-status').textContent='Sent to your Telegram chat.'; } catch(error) { if(showing===popupGeneration)$('media-popup-status').textContent=error.message; } finally { $('media-send').disabled=false; } };
+    $('media-send').onclick=async()=>{ if($('media-send').disabled)return;$('media-send').disabled=true; try { await sendFile(id,file); if(showing===popupGeneration)$('media-popup-status').textContent='Queued for your Telegram chat. Please wait for delivery.'; } catch(error) { if(showing===popupGeneration)$('media-popup-status').textContent=error.message; } finally { if(showing===popupGeneration)$('media-send').disabled=false; } };
+    $('media-send').disabled=false;
     $('photo-dialog').showModal();
   }
-  function saveBlob(blob, filename) { const url=URL.createObjectURL(blob); const link=document.createElement('a');link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),60000); }
-  async function mediaBlob(eventId, fileId,thumbnail=false) {
-    const response=await fetch(`/api/events/${eventId}/media/${fileId}${thumbnail?'/thumbnail':''}`,{headers:{Authorization:'tma '+initData},signal:AbortSignal.timeout(30000)});
-    if(!response.ok){const data=await response.json();throw new Error(data.error || 'Could not download this file.');}return response.blob();
+  async function saveBlob(blob, filename) {
+    // An already-open preview has the bytes ready during the user's gesture,
+    // which lets supported iPhone/Android webviews open their native save/share UI.
+    if(typeof navigator!=='undefined' && typeof File!=='undefined' && navigator.canShare && navigator.share){
+      const files=[new File([blob],filename,{type:blob.type})];
+      if(navigator.canShare({files}))try{await navigator.share({files});return;}catch(error){if(error.name==='AbortError')return;}
+    }
+    const url=URL.createObjectURL(blob),link=document.createElement('a');
+    link.href=url;link.download=filename;document.body?.append(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+    notice('Download opened. If your phone does not offer Save, use Send to Telegram and save from the chat.');
+  }
+  function mediaBlob(eventId, fileId,thumbnail=false) {
+    const key=`${generation}/${eventId}/${fileId}/${thumbnail}`,signal=mediaController.signal;
+    if(downloads.has(key))return downloads.get(key);
+    const task=(async()=>{
+      if(activeDownloads>=3)await new Promise(resolve=>waiting.push(resolve));
+      activeDownloads++;
+      try{
+        signal.throwIfAborted();
+        const response=await fetch(`/api/events/${eventId}/media/${fileId}${thumbnail?'/thumbnail':''}`,{headers:{Authorization:'tma '+initData},signal:AbortSignal.any([signal,AbortSignal.timeout(30000)])});
+        if(!response.ok){const data=await response.json();throw new Error(data.error || 'Could not download this file.');}return await response.blob();
+      }finally{activeDownloads--;waiting.shift()?.();}
+    })().finally(()=>downloads.delete(key));
+    downloads.set(key,task);return task;
   }
   async function openGallery(id) {
     const current=++generation;
+    resetDownloads();
     galleryEvent=id;go('gallery');$('gallery-error').hidden=true;
     $('gallery-settings').replaceChildren();$('gallery-settings').hidden=true;
     $('gallery-title').textContent='Shared media';$('gallery-summary').textContent='Loading files…';
@@ -61,8 +92,9 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
         }
         body.append(element('strong',file.filename==='photo'?'Photo':file.filename),element('p',[file.name?'Shared by '+file.name:'',file.caption].filter(Boolean).join('\n'),'small muted'));
         const buttons=element('div','','event-actions');
-        buttons.append(iconAction('⬇','Download',async()=>{try{saveBlob(await mediaBlob(id,file.id),file.filename==='photo'?'photo.jpg':file.filename==='video'?'video.mp4':file.filename);}catch(error){notice(error.message);}}));
-        buttons.append(iconAction('✈','Send to Telegram',async()=>{try{await api(`events/${id}/media/${file.id}/send`,{});notice('File sent to your Telegram chat.');}catch(error){notice(error.message);}}));
+        const downloadButton=iconAction('⬇','Download',async()=>{if(downloadButton.disabled)return;downloadButton.disabled=true;try{await saveBlob(await mediaBlob(id,file.id),filename(file));}catch(error){notice(error.message);}finally{downloadButton.disabled=false;}});
+        const sendButton=iconAction('✈','Send to Telegram',async()=>{if(sendButton.disabled)return;sendButton.disabled=true;try{await sendFile(id,file);notice('Queued for your Telegram chat. Please wait for delivery.');}catch(error){notice(error.message);}finally{sendButton.disabled=false;}});
+        buttons.append(downloadButton,sendButton);
         if(kind==='video')buttons.append(iconAction('▶','Play video',async()=>{const pending=++popupGeneration;try{const blob=await mediaBlob(id,file.id);if(current!==generation || pending!==popupGeneration)return;const url=URL.createObjectURL(blob);urls.add(url);showMedia(id,previewFile,blob,url);}catch(error){if(current===generation && pending===popupGeneration)notice(error.message);}}));
         body.append(buttons);card.append(body);list.append(card);
       }
@@ -102,6 +134,8 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
   $('photo-dialog').onclose=()=>{ popupGeneration++;$('video-full').pause(); $('video-full').removeAttribute('src'); $('video-full').load(); };
   function dismissPendingMedia(){
     generation++;popupGeneration++;qrGeneration++;
+    resetDownloads();
+    for(const url of urls)URL.revokeObjectURL(url);urls.clear();
     for(const id of ['photo-dialog','qr-dialog'])if($(id).open)$(id).close();
   }
   return {openGallery,showQr,dismissPendingMedia};
