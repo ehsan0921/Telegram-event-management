@@ -139,7 +139,7 @@ function batchFixture(t,types){
     return Response.json({ok:true,result:f.mode==='partial'?messages.slice(1):method==='sendMediaGroup'?messages:messages[0]});
   });
   let textId=100000;
-  f.pressCancel=(id=2,number=f.read('preferences',id).mediaKeyboard?.number)=>processUpdate(f.env,{update_id:textId++,message:{chat:{id,type:'private'},from:{id},text:`✖ Cancel #${number}`}});
+  f.pressCancel=(id=2,number)=>{const pref=f.read('preferences',id),pointer=pref.mediaKeyboard,job=pointer && pref.mediaDelivery[pointer.event].jobs[pointer.job];return processUpdate(f.env,{update_id:textId++,message:{chat:{id,type:'private'},from:{id},text:number===undefined?progressKeyboard(job).keyboard[0][0].text:`✖ Cancel #${number}`}});};
   return f;
 }
 
@@ -322,8 +322,8 @@ for(const size of [0,1,10,11,200])test('reply delivery keyboard counts confirmed
   await f.cb(2,'media-get','all');
   const first=f.ui.find(r=>r.params.reply_markup?.keyboard);
   assert.ok(first);assert.equal(first.method,'sendMessage');assert.equal(first.params.reply_markup.inline_keyboard,undefined);
-  assert.match(first.params.reply_markup.keyboard[0][0].text,new RegExp('0/'+size+' sent'));
-  assert.match(first.params.reply_markup.keyboard[1][0].text,/Cancel #1/);
+  assert.match(first.params.reply_markup.keyboard[0][0].text,new RegExp('Cancel · 0/'+size+'$'));
+  assert.equal(first.params.reply_markup.keyboard.length,1);assert.equal(first.params.reply_markup.keyboard[0].length,1);assert.equal(first.params.text,size?'…':'Nothing new to send.');assert.equal(first.params.disable_notification,true);
   assert.equal(f.requests.length,0);
   const job=()=>Object.values(f.state(2).jobs)[0];
   assert.equal(job().notice.keyboardConfirmed,true);
@@ -331,7 +331,7 @@ for(const size of [0,1,10,11,200])test('reply delivery keyboard counts confirmed
   assert.equal(progressStats(job()).sent,size);assert.equal(progressStats(job()).remaining,0);
   assert.equal(f.requests.length,Math.ceil(size/10));
   assert.equal(f.read('preferences',2).mediaKeyboard,undefined);
-  assert.ok(f.ui.some(r=>r.params.reply_markup?.keyboard && !JSON.stringify(r.params.reply_markup).includes('Cancel #')));
+  assert.ok(f.ui.some(r=>r.params.reply_markup?.keyboard && !JSON.stringify(r.params.reply_markup).includes('Cancel')));
   assert.equal(f.ui.some(r=>['editMessageText','editMessageReplyMarkup'].includes(r.method)),false);
 });
 
@@ -342,7 +342,7 @@ test('reply keyboard bypasses a busy media lease; Cancel stops queued media with
   assert.ok(f.ui.some(r=>r.params.reply_markup?.keyboard));assert.equal(f.requests.length,0);
   await f.cb(3,'media-get','all');
   await f.pressCancel(2);
-  assert.ok(f.ui.some(r=>r.params.chat_id===2 && /Cancellation requested/.test(r.params.text || '')));
+  assert.ok(f.ui.some(r=>r.params.chat_id===2 && /Stopping/.test(r.params.text || '')));
   assert.equal(f.requests.length,0);
   f.db.exec('DELETE FROM delivery_lease');await drainOutbox(f.env);
   assert.equal(f.state(2).received.length,0);assert.equal(f.state(3).received.length,11);
@@ -367,7 +367,7 @@ test('initial control 429 gates media until the keyboard is acknowledged',async 
 for(const mode of ['400','partial','timeout','429'])test('reply progress does not count '+mode+' as confirmed sent',async t=>{
   const f=batchFixture(t,['photo','photo']);await f.cb(2,'media-get','all');f.mode=mode;
   await drainOutbox(f.env);const job=Object.values(f.state(2).jobs)[0],stats=progressStats(job);
-  assert.equal(stats.sent,0);assert.equal(stats.remaining,2);assert.match(progressKeyboard(job).keyboard[0][0].text,/0\/2 sent/);
+  assert.equal(stats.sent,0);assert.equal(stats.remaining,2);assert.match(progressKeyboard(job).keyboard[0][0].text,/Cancel · 0\/2/);
   if(mode==='400')assert.equal(stats.failed,2);
   if(mode==='partial')assert.equal(stats.partial,2);
   if(mode==='timeout')assert.equal(stats.unknown,2);
@@ -378,7 +378,7 @@ test('an ambiguous progress control never replays confirmed media receipts',asyn
   const f=batchFixture(t,['photo']);await f.cb(2,'media-get','all');
   const real=globalThis.fetch;
   t.mock.method(globalThis,'fetch',async(url,options)=>url.endsWith('/sendMessage') && JSON.parse(options.body).reply_markup?.keyboard?Response.json({ok:false,error_code:503}):real(url,options));
-  const button=progressKeyboard(Object.values(f.state(2).jobs)[0]).keyboard[0][0].text;
+  const j=Object.values(f.state(2).jobs)[0];const button=`📊 0/1 sent · 1 left · #${j.number}`;
   await processUpdate(f.env,{update_id:900003,message:{chat:{id:2,type:'private'},from:{id:2},text:button}});
   await drainOutbox(f.env);f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);
   assert.equal(f.requests.length,1);assert.equal(f.state(2).received.length,1);
@@ -389,4 +389,34 @@ test('revoked access clears queued media even when the initial control was not a
   t.mock.method(globalThis,'fetch',async(url,options)=>JSON.parse(options.body).reply_markup?.keyboard?Response.json({ok:false,error_code:429,parameters:{retry_after:30}}):real(url,options));
   await f.cb(2,'media-get','all');const pref=f.read('preferences',2);pref.mediaAccess={};f.save('preferences',2,pref);
   await drainOutbox(f.env);assert.equal(f.requests.length,0);assert.deepEqual(f.state(2).pending,{});
+});
+
+test('identical count labels from different jobs require explicit scoped confirmation',async t=>{
+ const f=batchFixture(t,['photo','photo']);await f.cb(2,'media-get','all');const old=progressKeyboard(Object.values(f.state(2).jobs)[0]).keyboard[0][0].text;
+ await f.pressCancel(2);await drainOutbox(f.env);await f.cb(2,'media-get','new');
+ await processUpdate(f.env,{update_id:991000,message:{chat:{id:2,type:'private'},from:{id:2},text:old}});
+ assert.equal(Object.values(f.state(2).jobs).at(-1).cancelRequested,undefined);
+ const question=f.ui.findLast(r=>r.params.text?.startsWith('Which delivery'));
+ assert.ok(question);
+ const current=Object.values(f.state(2).jobs).at(-1);
+ assert.ok(current.notice.keyboardMessageId);
+ assert.equal(f.ui.some(r=>r.method==='deleteMessage' && r.params.message_id===current.notice.keyboardMessageId),false);
+ const callback=question.params.reply_markup.inline_keyboard[0][0].callback_data;
+ await processUpdate(f.env,{update_id:991001,callback_query:{id:'fictional-confirm',from:{id:2},data:callback}});await drainOutbox(f.env);
+ assert.equal(f.requests.length,0);assert.equal(f.state(2).received.length,0);
+ assert.ok(f.ui.every(r=>!/#\d+|Delivery #|Known in flight/.test(r.params.text || '')));
+});
+
+test('superseded controls are removed only after replacement; latest keyboard and media are retained',async t=>{
+ const f=batchFixture(t,Array(11).fill('photo'));await f.cb(2,'media-get','all');await drainOutbox(f.env);
+ const controls=f.ui.filter(r=>r.method==='sendMessage' && r.params.reply_markup?.keyboard),deleted=f.ui.filter(r=>r.method==='deleteMessage').map(r=>r.params.message_id);
+ assert.ok(controls.length>=2);assert.ok(deleted.length>0);
+ assert.ok(deleted.every(id=>id>=10000));assert.equal(deleted.includes(f.uiId),false);
+ assert.equal(f.state(2).received.length,11);
+});
+
+test('a confirmation arriving after completion cannot cancel a later job',async t=>{
+ const f=batchFixture(t,['photo']);await f.cb(2,'media-get','all');const old=Object.values(f.state(2).jobs)[0].id;await drainOutbox(f.env);
+ await f.cb(2,'media-get','all');await f.cb(2,'media-stop',old);
+ assert.equal(Object.values(f.state(2).jobs).at(-1).cancelRequested,undefined);await drainOutbox(f.env);assert.equal(f.requests.length,2);
 });
