@@ -41,9 +41,10 @@ export async function mediaApi(request, env, user) {
   if (match[2] === 'gallery' && request.method === 'GET'){
     const files=visibleMedia(graph,e,user.id),likes=await galleryLikes(env,files,user.id),shown=new Set(files.map(file=>file.id));
     return json({socialFeatures:env.ALBUM_SOCIAL_ENABLED!=='false',id:e.id,title:e.title,galleryUrl,qrEnabled:e.qrEnabled!==false,cancelled:!!e.cancelled,isOwner:e.owner===user.id,canRemove:env.ALBUM_SOCIAL_ENABLED!=='false' && e.owner===user.id && e.kind==='photos',mediaVersion:e.mediaEditVersion || 0,canUpload:!e.cancelled && mediaCan(e,user.id,'uploadMedia',pref),uploadUrl:`https://t.me/${env.BOT_USERNAME}?start=a_${e.id}`,
-      linkedAccessNote:(e.media || []).some(file=>file.reference)?'Linked media remains subject to the source album. Viewers also need current source access.':null,
+      copySharingNote:'People who can view a photo can save and share it from their own album. Revoking a source link does not recall existing saved copies.',
+      linkedAccessNote:(e.media || []).some(file=>file.reference)?'Older linked items still require current source access. New saved photo copies follow this album’s access.':null,
       unavailable:e.owner===user.id?(e.media || []).filter(file=>file.reference && !shown.has(file.id)).map(file=>({id:file.id})):[],
-      media:files.map(file=>({id:file.id,type:file.type,previewKind:mediaPreview(file),hasThumbnail:!!file.thumbnail,filename:file.filename,caption:file.caption,name:showsUploaders(e)?file.name:null,at:file.at,size:file.size || null,reference:!!file.reference,canLink:mayLinkMedia(graph,e,e.media.find(item=>item.id===file.id),user.id),canLike:env.ALBUM_SOCIAL_ENABLED!=='false' && mediaPreview(file)==='photo',...(likes.get(likeIdentity(file)) || {likeCount:0,liked:false})}))});
+      media:files.map(file=>({id:file.id,type:file.type,previewKind:mediaPreview(file),hasThumbnail:!!file.thumbnail,filename:file.filename,caption:file.caption,name:showsUploaders(e)?file.name:null,at:file.at,size:file.size || null,reference:!!file.reference,savedCopy:!!file.savedFrom,canSave:env.ALBUM_SOCIAL_ENABLED!=='false' && mediaPreview(file)==='photo',canLink:mayLinkMedia(graph,e,e.media.find(item=>item.id===file.id),user.id),canLike:env.ALBUM_SOCIAL_ENABLED!=='false' && mediaPreview(file)==='photo',...(likes.get(likeIdentity(file)) || {likeCount:0,liked:false})}))});
   }
   const rawFile=e.media?.find(item=>item.id===match[3]);
   const f=resolveMedia(graph,e,rawFile,user.id);

@@ -37,6 +37,69 @@ function fixture(t){
  return {db,save,read,source,dest,env,calls,api,value,policy,add,cb,msg,auth};
 }
 
+const saveCopy=(f,requestId=randomUUID(),mediaId='111111111111')=>f.value(2,'albums/'+f.dest.id+'/copies',{sourceEvent:f.source.id,mediaId,requestId});
+
+test('Share explains independent photo copies without changing link or upload settings',async t=>{
+ const f=fixture(t),before=structuredClone(f.read('events',f.source.id));await f.cb(2,f.source.id,'album-share');const messages=f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage'").all().map(row=>JSON.parse(row.params));assert.ok(messages.some(message=>message.text?.includes('Revoking this link does not recall saved copies.')));assert.deepEqual(f.read('events',f.source.id),before);
+});
+
+test('a current source viewer saves exactly one independent photo without a separate linking grant',async t=>{
+ const f=fixture(t),source=structuredClone(f.read('events',f.source.id));assert.notEqual(source.allowMediaReshare,true);
+ const result=await saveCopy(f),raw=f.read('events',f.dest.id).media[0];assert.equal(result.added,1);assert.equal(raw.fileId,source.media[0].fileId);assert.equal(raw.reference,undefined);assert.deepEqual(raw.savedFrom,{event:source.id,media:'111111111111'});assert.deepEqual(f.read('events',source.id),source);assert.equal(f.calls.length,0);
+ const gallery=await f.value(4,'events/'+f.dest.id+'/gallery');assert.equal(gallery.media.length,1);assert.equal(gallery.media[0].savedCopy,true);assert.equal(gallery.media[0].fileId,undefined);assert.equal(gallery.media[0].savedFrom,undefined);assert.match(gallery.copySharingNote,/does not recall/);
+ const path='events/'+f.dest.id+'/media/'+raw.id;assert.equal(await(await f.api(4,path)).text(),'fictional-media-bytes');assert.deepEqual(await f.value(4,path+'/likes'),{count:0,liked:false});assert.equal((await f.api(4,path+'/send',{})).status,200);
+});
+
+test('saved copies remain after source link rotation or individual source revocation; new source access stays denied',async t=>{
+ const f=fixture(t),saved=(await saveCopy(f)).ids[0];await f.value(1,'collections/'+f.source.id+'/access',{action:'regenerate',confirm:true,version:0});assert.equal((await f.api(2,'events/'+f.source.id+'/gallery')).status,403);assert.equal((await f.value(4,'events/'+f.dest.id+'/gallery')).media[0].id,saved);
+ assert.equal((await f.api(2,'albums/'+f.dest.id+'/copies',{sourceEvent:f.source.id,mediaId:'222222222222',requestId:randomUUID()})).status,403);
+ await f.value(1,'albums/'+f.source.id+'/members',{userId:4,blocked:true,confirm:true,version:0});assert.equal((await f.api(4,'events/'+f.dest.id+'/media/'+saved+'/likes')).status,200);assert.equal((await f.api(4,'events/'+f.source.id+'/media/111111111111/likes')).status,403);
+});
+
+test('destination ownership and current source access are required; a client cannot supply inaccessible bytes or a whole album',async t=>{
+ const f=fixture(t),body={sourceEvent:f.source.id,mediaId:'111111111111',requestId:randomUUID()};assert.equal((await f.api(3,'albums/'+f.dest.id+'/copies',body)).status,403);assert.equal((await f.api(2,'albums/'+f.dest.id+'/copies',{...body,mediaIds:['111111111111','222222222222']})).status,400);
+ await f.value(1,'albums/'+f.source.id+'/members',{userId:2,blocked:true,confirm:true,version:0});assert.equal((await f.api(2,'albums/'+f.dest.id+'/copies',{...body,fileId:'client-injected'})).status,403);assert.equal(f.read('events',f.dest.id).media.length,0);assert.equal(f.calls.length,0);
+});
+
+test('destination access alone controls a saved copy after saving, including preview, likes, send and status',async t=>{
+ const f=fixture(t),saved=(await saveCopy(f)).ids[0],path='events/'+f.dest.id+'/media/'+saved;await f.value(2,'albums/'+f.dest.id+'/members',{userId:4,blocked:true,confirm:true,version:0});
+ for(const suffix of ['', '/thumbnail','/likes','/delivery-status?request='+'a'.repeat(16)])assert.equal((await f.api(4,path+suffix)).status,403);assert.equal((await f.api(4,path+'/send',{})).status,403);assert.equal((await f.api(3,path+'/likes')).status,200);
+ await f.value(2,'collections/'+f.dest.id+'/access',{action:'regenerate',confirm:true,version:0});assert.equal((await f.api(3,path+'/likes')).status,403);assert.equal((await f.api(2,path+'/likes')).status,200);
+});
+
+test('copy requests deduplicate, preserve tombstones after removal, and never delete the source',async t=>{
+ const f=fixture(t),request=randomUUID(),first=await saveCopy(f,request),source=structuredClone(f.read('events',f.source.id));assert.deepEqual((await saveCopy(f,request)).ids,first.ids);assert.equal((await saveCopy(f)).added,0);assert.equal(f.read('events',f.dest.id).media.length,1);
+ assert.equal((await f.api(2,'albums/'+f.dest.id+'/copies',{sourceEvent:f.source.id,mediaId:'222222222222',requestId:request})).status,409);
+ await f.value(2,'albums/'+f.dest.id+'/remove',{mediaId:first.ids[0],confirm:true,version:f.read('events',f.dest.id).mediaEditVersion});assert.deepEqual((await saveCopy(f,request)).ids,[]);assert.equal(f.read('events',f.dest.id).media.length,0);assert.deepEqual(f.read('events',f.source.id),source);
+});
+
+for(const first of ['copy','revoke'])test('source revoke and save serialize safely when '+first+' commits first',async t=>{
+ const f=fixture(t),original=f.env.DB.batch;let enter,release,held=false;const entered=new Promise(resolve=>enter=resolve),barrier=new Promise(resolve=>release=resolve);
+ f.env.DB.batch=async statements=>{if(!held && statements.some(q=>q.args.some(v=>typeof v==='string' && v.includes(first==='copy'?'"savedFrom"':'"mediaRevokedUsers"')))){held=true;enter();await barrier;}return original(statements);};
+ const copy=()=>f.api(2,'albums/'+f.dest.id+'/copies',{sourceEvent:f.source.id,mediaId:'111111111111',requestId:randomUUID()}),revoke=()=>f.api(1,'albums/'+f.source.id+'/members',{userId:2,blocked:true,confirm:true,version:0});
+ const a=first==='copy'?copy():revoke();await entered;const b=first==='copy'?revoke():copy();release();const result=await Promise.all([a,b]);assert.equal(result[first==='copy'?0:1].status,first==='copy'?200:403);assert.equal(result[first==='copy'?1:0].status,200);assert.equal((await f.value(4,'events/'+f.dest.id+'/gallery')).media.length,first==='copy'?1:0);
+});
+
+test('saving an authorized legacy reference makes a new copy without rewriting or widening older references',async t=>{
+ const f=fixture(t);await f.policy(true);const old=(await f.add()).ids[0],third=photoCollection('Fictional third album',3);f.save('events',third.id,third);f.save('preferences',4,{mediaAccess:{[f.dest.id]:f.dest.viewToken,[third.id]:third.viewToken}});
+ const copy=await f.value(3,'albums/'+third.id+'/copies',{sourceEvent:f.dest.id,mediaId:old,requestId:randomUUID()});await f.policy(false);assert.equal((await f.value(4,'events/'+third.id+'/gallery')).media[0].id,copy.ids[0]);assert.deepEqual((await f.value(3,'events/'+f.dest.id+'/gallery')).media,[]);assert.ok(f.read('events',f.dest.id).media[0].reference);
+});
+
+test('copies preserve hidden attribution and existing photo-like privacy and pause in safe mode',async t=>{
+ const f=fixture(t),source=f.read('events',f.source.id);source.showUploaders=false;f.save('events',source.id,source);const copy=await saveCopy(f);assert.equal(f.read('events',f.dest.id).media[0].name,null);assert.equal((await f.value(4,'events/'+f.dest.id+'/gallery')).media[0].name,null);
+ await f.value(4,'events/'+f.dest.id+'/media/'+copy.ids[0]+'/likes',{liked:true});assert.deepEqual(await f.value(2,'events/'+f.dest.id+'/media/'+copy.ids[0]+'/likes'),{count:1,liked:false});f.env.ALBUM_SOCIAL_ENABLED='false';assert.equal((await f.api(2,'albums/'+f.dest.id+'/copies',{sourceEvent:source.id,mediaId:'222222222222',requestId:randomUUID()})).status,503);assert.equal(f.read('events',f.dest.id).media.length,1);
+});
+
+for(const revoke of ['source','destination'])test('queued saved-photo delivery follows '+revoke+' revocation semantics without resending',async t=>{
+ const f=fixture(t),saved=(await saveCopy(f)).ids[0];await f.cb(4,f.dest.id,'media-get','all');await f.value(revoke==='source'?1:2,'albums/'+(revoke==='source'?f.source.id:f.dest.id)+'/members',{userId:revoke==='source'?2:4,blocked:true,confirm:true,version:0});await drainOutbox(f.env);
+ const calls=f.calls.filter(call=>call.method==='sendPhoto' && call.params.chat_id===4);assert.equal(calls.length,revoke==='source'?1:0);assert.equal(f.read('preferences',4).mediaDelivery[f.dest.id].received.includes(saved),revoke==='source');await drainOutbox(f.env);assert.equal(f.calls.filter(call=>call.method==='sendPhoto' && call.params.chat_id===4).length,calls.length);
+});
+
+test('failed copy commit leaves no partial photo, request tombstone or notification; retry commits once',async t=>{
+ const f=fixture(t),original=f.env.DB.batch,requestId=randomUUID();let fail=true;f.env.DB.batch=async statements=>{if(fail && statements.some(q=>q.sql.includes("VALUES ('media_import'"))){fail=false;throw Error('Fictional storage interruption');}return original(statements);};
+ const body={sourceEvent:f.source.id,mediaId:'111111111111',requestId};assert.notEqual((await f.api(2,'albums/'+f.dest.id+'/copies',body)).status,200);assert.equal(f.read('events',f.dest.id).media.length,0);assert.equal(f.read('media_import','2:'+requestId),undefined);assert.equal(f.calls.length,0);const saved=await saveCopy(f,requestId);assert.equal(saved.added,1);assert.deepEqual((await saveCopy(f,requestId)).ids,saved.ids);assert.equal(f.read('events',f.dest.id).media.length,1);
+});
+
 test('personal album creation is private, owned and idempotent; legacy collection creation stays compatible',async t=>{
  const f=fixture(t),requestId=randomUUID(),first=await f.value(2,'collections',{title:'Fictional private memories',personal:true,requestId});
  assert.equal(first.event.isOwner,true);assert.equal(first.event.sharingDisabled,true);assert.equal(first.event.photoLinks,null);

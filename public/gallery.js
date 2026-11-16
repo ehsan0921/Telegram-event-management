@@ -48,45 +48,51 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
   }
   async function choosePersonalAlbum(sourceId,file=null){
     const {dialog,content,status,close}=socialDialog(file?'Add to personal album':'New personal album'),current=generation;
-    content.append(element('p',file?'This creates a link, not a copy. Source permission and current source access are still required for every viewer.':'Your personal album starts private. Use album sharing controls when you are ready.','small muted'));
+    const photo=!!file && (file.previewKind==='photo' || file.type==='photo');
+    content.append(element('p',file?(photo?'Save this one photo as a copy. People with access to your destination album can view and share it without source access. Revoking the source link will not recall this saved copy.':'This creates a source-dependent link. Source permission and current source access are still required for every viewer.'):'Your personal album starts private. Use album sharing controls when you are ready.','small muted'));
     const select=element('select'),selectLabel=element('label','Your album'),title=element('input'),titleLabel=element('label','New personal album name');title.maxLength=100;title.type='text';titleLabel.append(title);selectLabel.append(select);
-    const create=action('Create private album',createAlbum),add=action('Add selected media',addMedia);let busy=false,createRequest=null,addRequest=null,addedTarget=null;
+    const create=action(file?(photo?'Create album & add photo':'Create album & add item'):'Create private album',createAlbum),add=action(photo?'Add photo':'Add selected media',addMedia);let busy=false,createRequest=null,addRequest=null,addedTarget=null;
+    create.onclick=createAlbum;add.onclick=addMedia;
     if(file)content.append(selectLabel);content.append(titleLabel,create);if(file)content.append(add);
     dialog.oncancel=event=>{if(busy)event.preventDefault();};
     function lock(value){busy=value;for(const control of [select,title,create,add,close])control.disabled=value;add.disabled=value || !select.children.length || addedTarget===select.value;}select.onchange=()=>lock(false);
-    function option(album){const entry=element('option',album.title+(album.private?' (private)':''));entry.value=album.id;select.append(entry);}
+    function option(album){if([...select.children].some(entry=>entry.value===album.id))return;const entry=element('option',album.title+(album.private?' (private)':''));entry.value=album.id;select.append(entry);}
     async function load(){if(!file)return;lock(true);status.textContent='Loading your albums.';try{const result=await api('albums/owned');if(!dialog.isConnected)return;select.replaceChildren();for(const album of result.albums.filter(album=>album.id!==sourceId))option(album);status.textContent=select.children.length?'Choose an album, or create a private one.':'Create a private album first.';}catch(error){status.textContent=error.message;}finally{lock(false);add.disabled=!select.children.length;}}
     async function createAlbum(){
       if(busy)return;const name=title.value.trim();if(!name){status.textContent='Enter an album name.';return;}
       if(!createRequest || createRequest.title!==name)createRequest={title:name,id:crypto.randomUUID()};lock(true);status.textContent='Creating private album.';
-      try{const result=await api('collections',{title:name,personal:true,requestId:createRequest.id});if(!dialog.isConnected || current!==generation)return;await refreshAlbums?.();
-        if(file){option({id:result.event.id,title:result.event.title,private:true});select.value=result.event.id;status.textContent='Private album created. Choose Add selected media to link this item.';}
-        else{dialog.close();await openGallery(result.event.id);}
-      }catch(error){if(dialog.isConnected)status.textContent=error.message;}
-      finally{lock(false);if(file)add.disabled=!select.children.length;}
+      let created=false;try{const result=await api('collections',{title:name,personal:true,requestId:createRequest.id});if(!dialog.isConnected || current!==generation)return;
+        if(file){created=true;option({id:result.event.id,title:result.event.title,private:true});select.value=result.event.id;await linkToAlbum(result.event.id);}
+        else{await refreshAlbums?.();dialog.close();await openGallery(result.event.id);}
+      }catch(error){if(dialog.isConnected)status.textContent=created?'Private album created. Adding this item was not confirmed: '+error.message+' Use Add photo to retry the same request.':error.message;}
+      finally{lock(false);}
+    }
+    async function linkToAlbum(target){
+      if(!addRequest || addRequest.target!==target)addRequest={target,id:crypto.randomUUID()};status.textContent=photo?'Adding this photo.':'Adding linked media.';
+      const result=await api(`albums/${target}/${photo?'copies':'references'}`,photo?{sourceEvent:sourceId,mediaId:file.id,requestId:addRequest.id}:{sourceEvent:sourceId,mediaIds:[file.id],requestId:addRequest.id});if(!dialog.isConnected || current!==generation)return;
+      status.textContent=result.added?(photo?'Photo added to your album. The original is unchanged.':'Linked to your album. The original is unchanged.'):result.ids?.length?(photo?'This photo was already saved. Destination album permissions apply.':'This item was already linked. Source permissions still apply.'):'This earlier request was already handled; removed items stay removed.';addedTarget=target;try{await refreshAlbums?.();}catch{notice('Album list could not refresh. The item result above is unchanged.');}
     }
     async function addMedia(){
-      if(busy || !select.value)return;if(!addRequest || addRequest.target!==select.value)addRequest={target:select.value,id:crypto.randomUUID()};lock(true);status.textContent='Adding linked media.';
-      try{const result=await api(`albums/${select.value}/references`,{sourceEvent:sourceId,mediaIds:[file.id],requestId:addRequest.id});if(!dialog.isConnected || current!==generation)return;
-        status.textContent=result.added?'Linked to your album. The original is unchanged.':result.ids?.length?'This item was already linked. Source permissions still apply.':'This earlier request was already handled; removed items stay removed.';addedTarget=select.value;await refreshAlbums?.();add.disabled=true;
-      }catch(error){if(dialog.isConnected)status.textContent=error.message;}
+      if(busy || !select.value || addedTarget===select.value)return;lock(true);
+      try{await linkToAlbum(select.value);}
+      catch(error){if(dialog.isConnected)status.textContent=error.message;}
       finally{lock(false);}
     }
     await load();
   }
   async function removeAlbumMedia(id,file,version){
-    const message=file.reference?'Remove this linked item from your album? Its original and source album are unchanged. Previously delivered copies cannot be recalled.':'Remove this original item from your album? Other albums linking this original will lose access to it. Previously delivered copies cannot be recalled.';
+    const message=file.reference?'Remove this linked item from your album? Its original and source album are unchanged. Previously delivered copies cannot be recalled.':file.savedCopy?'Remove this saved photo from your album? Its original source and other saved copies are unchanged. Previously delivered copies cannot be recalled.':'Remove this original item from your album? Older source-dependent links may lose access. Independent saved copies and previously delivered files remain.';
     if(!await confirmMediaAction(message,'album-media-remove'))return;
-    await api(`albums/${id}/remove`,{mediaId:file.id,version,confirm:true});await refreshAlbums?.();await openGallery(id);notice(file.reference?'Removed from this album. The original source is unchanged.':'Removed from this album. Previously delivered copies remain.');
+    await api(`albums/${id}/remove`,{mediaId:file.id,version,confirm:true});await refreshAlbums?.();await openGallery(id);notice(file.reference || file.savedCopy?'Removed from this album. The original source is unchanged.':'Removed from this album. Previously delivered copies remain.');
   }
   function mediaManagement(id,parent,current){
     const panel=element('details','','album-access'),heading=element('summary','Media access & linking'),body=element('div');panel.append(heading,body);parent.append(panel);let busy=false;
     async function load(){
       body.replaceChildren(element('p','Loading media controls.','small muted'));
       try{const data=await api(`albums/${id}/manage`);if(!panel.isConnected || current!==generation)return;body.replaceChildren();
-        const label=element('label','','check-option'),toggle=element('input');toggle.type='checkbox';toggle.checked=data.allowMediaReshare;label.append(toggle,element('span','Allow linking original media into personal albums'));body.append(label,element('p','Off by default. Linked items remain visible only to people who also have current source access. Turning this off invalidates existing links created by others; enabling it again does not revive old grants.','small muted'));
+        const label=element('label','','check-option'),toggle=element('input');toggle.type='checkbox';toggle.checked=data.allowMediaReshare;label.append(toggle,element('span','Allow source-dependent linked media'));body.append(label,element('p','This controls source-dependent links, including older photo links. Those viewers still need source access. Turning it off invalidates links created by others; turning it on does not revive them. New saved photo copies follow destination permissions and are not recalled by this switch.','small muted'));
         toggle.onchange=async()=>{if(busy)return;const allowed=toggle.checked;toggle.checked=data.allowMediaReshare;
-          if(!await confirmMediaAction(allowed?'Allow current viewers to link original media into their personal albums? Every viewer will still need source access.':'Stop new links and invalidate existing links created by others? Originals stay in this album.','album-reshare'))return;
+          if(!await confirmMediaAction(allowed?'Allow source-dependent media links? Those viewers still need source access. Saved photo copies are unaffected.':'Stop source-dependent links and invalidate those created by others? Originals and independent saved photo copies remain.','album-reshare'))return;
           busy=true;toggle.disabled=true;try{await api(`albums/${id}/reshare`,{allowed,version:data.shareVersion,confirm:true});await load();notice('Linking permission updated.');}catch(error){notice(error.message);}finally{busy=false;toggle.disabled=false;}
         };
         body.append(element('h3','People with media access'),element('p','Revoking media access does not change event RSVPs or affect other albums. Existing copies and in-flight requests cannot be recalled.','small muted'));
@@ -154,6 +160,7 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
       renderAlbumDetails?.(id,$('gallery-settings'));
       if(gallery.socialFeatures){const tools=element('div','','event-actions');tools.append(action('＋ New personal album',()=>choosePersonalAlbum(id)));$('gallery-settings').prepend(tools);$('gallery-settings').hidden=false;
       if(gallery.linkedAccessNote)$('gallery-settings').append(element('p',gallery.linkedAccessNote,'small muted'));
+      if(gallery.copySharingNote)$('gallery-settings').append(element('p',gallery.copySharingNote,'small muted'));
       if(gallery.isOwner)mediaManagement(id,$('gallery-settings'),current);}
       $('gallery-title').textContent=gallery.title;$('gallery-summary').textContent=`${gallery.media.length} shared files. Send a file to your Telegram chat.`;
       $('gallery-upload').hidden=!gallery.canUpload;$('gallery-upload').onclick=()=>openTelegram(gallery.uploadUrl);
@@ -180,7 +187,7 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
         const buttons=element('div','','event-actions');
         const sendButton=iconAction('✈','Send to Telegram',async()=>{const current=generation,update=status=>{if(current===generation)notice(sendStatusText(status));};try{const result=await sendFile(id,file,update);update(result.status);}catch(error){if(current===generation)notice(error.message+' Delivery is not confirmed; check your chat before trying again.');}});
         buttons.append(sendButton);reactions(id,file,buttons);
-        if(gallery.socialFeatures){const addToAlbum=iconAction('＋','Add to personal album',()=>choosePersonalAlbum(id,file));addToAlbum.disabled=file.canLink!==true;addToAlbum.title=file.reference?'Open the original source album to link this item.':'The source owner must allow linking; current source access is still required.';buttons.append(addToAlbum);}
+        if(gallery.socialFeatures){const addToAlbum=iconAction('+','Add to personal album',()=>choosePersonalAlbum(id,file));addToAlbum.setAttribute('aria-label',kind==='photo'?'Add this photo to a personal album':'Add this item to a personal album');addToAlbum.disabled=kind==='photo'?file.canSave!==true:file.canLink!==true;addToAlbum.title=kind==='photo'?'Save this one photo using your current access. The saved copy follows destination album permissions.':file.reference?'Open the original source album to link this item.':'The source owner must allow linking; current source access is still required.';buttons.append(addToAlbum);}
         if(gallery.canRemove)buttons.append(action('Remove from album',()=>removeAlbumMedia(id,file,gallery.mediaVersion).catch(error=>notice(error.message)),'secondary'));
         if(kind==='video')buttons.append(iconAction('▶','Play video',async()=>{const pending=++popupGeneration;try{const blob=await mediaBlob(id,file.id);if(current!==generation || pending!==popupGeneration)return;const url=URL.createObjectURL(blob);urls.add(url);showMedia(id,previewFile,blob,url);}catch(error){if(current===generation && pending===popupGeneration)notice(error.message);}}));
         body.append(buttons);card.append(body);list.append(card);

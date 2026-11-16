@@ -1,4 +1,5 @@
 import {cohostEntries} from './cohosts.js';
+import {savePhotoCopy} from './photo-copy.js';
 import {rememberUser} from './admin.js';
 import {randomBytes} from 'node:crypto';
 import {mutateState,BusyError} from './worker-store.js';
@@ -43,7 +44,7 @@ async function managedMembers(env,event){
 export async function albumSocialApi(request,env,user){
  const url=new URL(request.url),path=url.pathname,id=user.id;
  const response=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
- const likes=path.match(/^\/api\/events\/([a-f0-9]{16})\/media\/([a-f0-9]{12})\/likes$/),manage=path.match(/^\/api\/albums\/([a-f0-9]{16})\/(manage|members|reshare|references|remove)$/);
+ const likes=path.match(/^\/api\/events\/([a-f0-9]{16})\/media\/([a-f0-9]{12})\/likes$/),manage=path.match(/^\/api\/albums\/([a-f0-9]{16})\/(manage|members|reshare|references|copies|remove)$/);
  if(!likes && !manage && path!=='/api/albums/owned')return null;
  if(env.ALBUM_SOCIAL_ENABLED==='false' && request.method!=='GET')return response({error:'Album changes are temporarily paused. Your media and access settings are preserved.'},503);
  try{
@@ -96,6 +97,7 @@ export async function albumSocialApi(request,env,user){
     return {saved:true,allowed:album.allowMediaReshare===true,version:album.mediaReshareVersion || 0};
    }
    if(album.kind!=='photos')fail('Use a personal media album for linked items.');
+   if(operation==='copies')return savePhotoCopy({data,bot,env,album,id,input,persist,fail});
    if(operation==='references'){
     if(!/^[a-f0-9-]{36}$/.test(input.requestId || '') || !/^[a-f0-9]{16}$/.test(input.sourceEvent || '') || !Array.isArray(input.mediaIds) || !input.mediaIds.length || input.mediaIds.length>50 || input.mediaIds.some(mid=>!/^[a-f0-9]{12}$/.test(mid)))fail('Choose valid source media and refresh before adding.');
     if(input.sourceEvent===eid)fail('This media is already in this album.');

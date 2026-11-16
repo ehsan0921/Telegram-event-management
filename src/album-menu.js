@@ -29,7 +29,7 @@ export function albumShare(bot,id,e){
   }
   rows.push([button('Back',`album-open:${e.id}`)]);
   const description=e.kind==='photos'?`Share an ${on?'upload and viewing':'viewing-only'} link.`:on?'Share an upload link. Gallery access still follows the event settings.':'Share a gallery link. Existing invitation and gallery permissions still apply.';
-  return bot.send(id,`${e.title}\n${description} This choice changes the link you copy; existing links and access stay unchanged.${!capable?'\nYour current access or the album settings allow sharing a viewing-only link.':''}${!links?'\nSharing is disabled for this album.':''}`,keyboard(rows));
+  return bot.send(id,`${e.title}\n${description} This choice changes the link you copy; existing links and access stay unchanged.\nPeople who can view photos can save and share independent copies. Revoking this link does not recall saved copies.${!capable?'\nYour current access or the album settings allow sharing a viewing-only link.':''}${!links?'\nSharing is disabled for this album.':''}`,keyboard(rows));
 }
 export function albumMore(bot,id,e){
   const state=mediaDeliveryState(bot.db,id,e.id),rows=[];
