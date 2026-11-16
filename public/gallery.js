@@ -36,29 +36,15 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
     if(!file.canLike)return;
     const key=id+'/'+file.id;let state=reactionStates.get(key);
     if(!state){state={liked:!!file.liked,count:file.likeCount || 0,busy:false,buttons:[],lists:[]};reactionStates.set(key,state);}
-    const like=action('',async()=>{
+    const like=element('button','','media-like-heart');like.type='button';like.onclick=async()=>{
       if(state.busy)return;state.busy=true;paint();const current=generation;
       try{const result=await api(`events/${id}/media/${file.id}/likes`,{liked:!state.liked});if(current!==generation)return;state.liked=result.liked;state.count=result.count;}
       catch(error){if(current===generation)notice(error.message);}
       finally{state.busy=false;if(current===generation)paint();}
-    });
-    const list=action('',()=>showLikers(id,file));state.buttons.push(like);state.lists.push(list);parent.append(like,list);
-    function paint(){for(const button of state.buttons){button.textContent=state.liked?'♥ Unlike':'♡ Like';button.disabled=state.busy;button.setAttribute('aria-pressed',String(state.liked));}for(const button of state.lists)button.textContent=`${state.count} ${state.count===1?'like':'likes'}`;}
+    };
+    const list=element('span','','media-like-count');state.buttons.push(like);state.lists.push(list);parent.append(like,list);
+    function paint(){for(const button of state.buttons){button.textContent=state.liked?'\u2665':'\u2661';button.disabled=state.busy;button.setAttribute('aria-label',state.liked?'Unlike photo':'Like photo');button.setAttribute('aria-pressed',String(state.liked));}for(const count of state.lists){count.textContent=`${state.count} ${state.count===1?'like':'likes'}`;count.setAttribute('aria-live','polite');}}
     paint();
-  }
-  async function showLikers(id,file){
-    const {dialog,content,status}=socialDialog('Photo likes'),more=action('More',()=>load(next),'secondary');let next=0,busy=false;
-    content.append(element('p','Your like and name are visible to people who can currently view this photo.','small muted'),more);
-    async function load(offset){
-      if(busy)return;busy=true;more.disabled=true;status.textContent='Loading likes.';
-      try{const result=await api(`events/${id}/media/${file.id}/likes?offset=${offset}`);if(!dialog.isConnected)return;
-        if(offset===0){for(const child of [...content.children])if(child!==more)child.remove();content.prepend(element('p','Likes are visible only to current photo viewers.','small muted'));}
-        for(const person of result.likers)content.insertBefore(element('p',person.name),more);
-        status.textContent=`${result.count} ${result.count===1?'like':'likes'}.`;next=result.next;more.hidden=next===null;
-      }catch(error){if(dialog.isConnected){content.replaceChildren();status.textContent=error.message;}}
-      finally{busy=false;more.disabled=false;}
-    }
-    await load(0);
   }
   async function choosePersonalAlbum(sourceId,file=null){
     const {dialog,content,status,close}=socialDialog(file?'Add to personal album':'New personal album'),current=generation;
@@ -167,7 +153,6 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
       const gallery=await api(`events/${id}/gallery`);if(current!==generation)return;
       renderAlbumDetails?.(id,$('gallery-settings'));
       if(gallery.socialFeatures){const tools=element('div','','event-actions');tools.append(action('＋ New personal album',()=>choosePersonalAlbum(id)));$('gallery-settings').prepend(tools);$('gallery-settings').hidden=false;
-      $('gallery-settings').append(element('p','Liking a photo makes your name visible to people who can currently view it.','small muted'));
       if(gallery.linkedAccessNote)$('gallery-settings').append(element('p',gallery.linkedAccessNote,'small muted'));
       if(gallery.isOwner)mediaManagement(id,$('gallery-settings'),current);}
       $('gallery-title').textContent=gallery.title;$('gallery-summary').textContent=`${gallery.media.length} shared files. Send a file to your Telegram chat.`;
