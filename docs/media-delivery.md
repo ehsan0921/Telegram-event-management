@@ -11,7 +11,7 @@ jump another album's item in the same chat. Last-served priority changes at
 actual API admission, not when a pacing reservation is made. Claims and owner
 checks prevent another drainer from sending the same chat concurrently.
 
-Media API starts are paced at least 500 ms apart globally and one second apart
+Media dispatch admission is paced at least 500 ms apart globally and one second apart
 per chat, with at most three active media calls. This conservative media budget
 leaves headroom for the existing priority controls and other bot traffic; it is
 not a promise that Telegram will never return 429. A real 429 pauses media
@@ -29,7 +29,10 @@ committed after restart without sending again. An interrupted attempt without
 a receipt, transport failure, or invalid/partial response remains uncertain.
 It is never blindly retried. Later media for that chat waits for explicit user
 review/retry, or a genuinely recorded receipt resolving the uncertainty.
-Other chats can continue. This is deliberately not an exactly-once claim:
+Other chats can continue. An explicit new Get/Send can clear a stale runtime
+hold when no accessible active uncertainty remains; inaccessible uncertainty
+is retained and is never automatically retried. This is deliberately not an
+exactly-once claim:
 Telegram sendMediaGroup has no idempotency key, and an explicit retry may repeat
 a file whose earlier delivery could not be confirmed.
 

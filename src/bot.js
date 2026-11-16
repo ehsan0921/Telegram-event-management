@@ -6,7 +6,7 @@ import {albumMembers} from './album-members.js';
 import {changeAlbumAccess} from './album-access.js';
 import {leaveAlbum,removeInvitation} from './stuff.js';
 import {uploadedMedia,mediaMethods,mediaPayload} from './media-preview.js';
-import {mediaDeliveryState,queueMedia,queueMediaFiles,refreshMedia,cancelMedia,notifyMediaFollowers} from './media-delivery.js';
+import {mediaDeliveryState,queueMedia,queueMediaFiles,refreshMedia,cancelMedia,notifyMediaFollowers,resumeMediaForExplicitRequest} from './media-delivery.js';
 import {startBroadcast,toggleBroadcast,collectBroadcast,sendBroadcast,undoBroadcast} from './guest-messages.js';
 import {invitationMode,claimInvitation,invitationSettings,invitationParticipantMode,oneTimeInvites,invitationAvailable,consumeInvitation,reconcileInvitationClaims} from './invitations.js';
 import {isManager,cohostEntries,cohostIds,cohostGuard,cohostLink,createCohostInvite,revokeCohost,claimCohost} from './cohosts.js';
@@ -640,6 +640,7 @@ export class Bot {
     if(['album-open','album-share','album-share-set','album-more'].includes(action))return albumMenuCallback(this,id,e,action,arg);
     if(action==='media-get' || action==='media-follow' || action==='media-retry'){
       if(!e || e.cancelled || !this.mediaAllowed(e,id) || !this.mediaCan(e,id,'viewMedia'))return this.home(id,'This media link is unavailable.');
+      if(action==='media-get')resumeMediaForExplicitRequest(this,id);
       const state=mediaDeliveryState(this.db,id,e.id);
       if(action==='media-retry'){
         const unknown=Object.entries(state.uncertain || {}).filter(([mid,token])=>state.pending[mid]===token).map(([mid])=>mid);

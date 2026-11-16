@@ -532,3 +532,14 @@ test('a held in-flight chat does not block another chat, and Cancel remains resp
  }finally{release();}
  await sending;assert.equal(f.state(2).received.length,10);assert.equal(f.requests.filter(r=>r.params.chat_id===2).length,1);assert.equal(f.state(3).received.length,11);
 });
+
+test('Get new recovers a stale runtime hold while active uncertainty still requires explicit review',async t=>{
+ const f=batchFixture(t,['photo','photo']);f.save('media_chat_state',2,{blocked:1});await f.cb(2,'media-get','new');await drainOutbox(f.env);assert.equal(f.state(2).received.length,2);
+ f.mode='timeout';await f.cb(2,'media-get','all');await drainOutbox(f.env);assert.equal(f.read('media_chat_state',2).blocked,1);const calls=f.requests.length;
+ f.mode='success';await f.cb(2,'media-get','new');await drainOutbox(f.env);assert.equal(f.requests.length,calls);assert.equal(f.read('media_chat_state',2).blocked,1);
+ const other=photoCollection('Fictional authorized album',1);other.media=[{...f.album.media[0],id:'eeeeeeeeeeee',fileId:'fictional-authorized'}];f.save('events',other.id,other);
+ const pref=f.read('preferences',2);pref.mediaAccess={[other.id]:other.viewToken};f.save('preferences',2,pref);
+ const response=await mediaApi(new Request('https://fictional.test/api/events/'+other.id+'/media/eeeeeeeeeeee/send',{method:'POST'}),f.env,{id:2});assert.equal(response.status,200);await drainOutbox(f.env);
+ assert.equal(f.requests.length,calls+1);assert.equal(f.requests.at(-1).params.photo,'fictional-authorized');assert.equal(Object.keys(f.state(2).uncertain).length,2);
+
+});
