@@ -26,7 +26,7 @@ test('photo-only creation works from the keyboard and from Create event without 
     const e=Object.values(f.store.data.events)[0];
     assert.equal(e.kind,'photos');assert.equal(e.startsAt,undefined);assert.equal(e.isPublic,false);assert.deepEqual(e.guests,{});
     assert.notEqual(e.viewToken,e.uploadToken);
-    const card=f.calls.at(-1),buttons=card.reply_markup.inline_keyboard.flat();
+    const card=f.calls.at(-1),buttons=card.reply_markup.keyboard.flat();
     for(const role of ['contributor','viewer']){
       await f.cb(1,`album-share-set:${e.id}:${role==='contributor'?'on':'off'}`);
       const copy=f.calls.at(-1).reply_markup.inline_keyboard.flat().find(b=>b.text==='Copy link');
@@ -80,7 +80,7 @@ test('My stuff lists event and gallery buttons before opening details and rechec
   assert.equal(f.calls.length,2);
   const buttons=f.calls.at(-1).reply_markup.inline_keyboard.flat();
   assert.deepEqual(buttons.map(b=>[b.text,b.callback_data]),[['Event: '+e.title,'v:'+e.id],['Media album: '+album.title,'v:'+album.id],['Media album: '+e.title,'m:'+e.id+':0']]);
-  await f.cb(1,'m:'+e.id+':0');assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.web_app?.url.endsWith('?gallery='+e.id)));
+  await f.cb(1,'m:'+e.id+':0');assert.ok(f.calls.at(-1).reply_markup.keyboard.flat().some(b=>b.web_app?.url.endsWith('?gallery='+e.id)));
   album.viewToken='a'.repeat(32);
   await f.cb(1,'v:'+album.id);
   assert.ok(!f.calls.at(-1).reply_markup.inline_keyboard?.flat().some(b=>b.web_app));
@@ -144,7 +144,7 @@ test('viewers cannot upload via callbacks, guessed upload links or stale contrib
   await f.msg(2,'/start p_'+e.viewToken);
   assert.equal(mediaRole(e,2,f.store.data.preferences[2]),'viewer');
   assert.equal(f.bot.mediaCan(e,2,'viewMedia'),true);assert.equal(f.bot.mediaCan(e,2,'uploadMedia'),false);
-  assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='➕ Add media'));
+  assert.ok(f.calls.at(-1).reply_markup.keyboard.flat().some(b=>b.text==='➕ Add media'));
   assert.equal(f.bot.mediaCan(e,2,'uploadMedia'),false);
   await f.cb(2,'media-add:'+e.id);assert.notEqual(f.store.data.sessions[2]?.step,'upload');
   await f.msg(2,'/start a_'+e.id);assert.notEqual(f.store.data.sessions[2]?.step,'upload');

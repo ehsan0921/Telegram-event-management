@@ -566,8 +566,8 @@ test('media links show only banner/title and media actions without RSVP and revo
   const f=fixture();f.bot.appUrl='https://test/app';const e=await f.create({uploadMedia:true,viewMedia:true,allowLinkUploads:true});e.banner='banner';e.location='PRIVATE ADDRESS';
   f.calls.length=0;await f.msg(99,`/start u_${e.uploadToken}`);
   let card=f.calls.at(-1);assert.equal(card.caption,e.title);assert.equal(card.method,'sendPhoto');assert.equal(e.guests[99],undefined);
-  const buttons=card.reply_markup.inline_keyboard.flat();assert.equal(buttons.length,7);
-  assert.ok(buttons.some(b=>b.callback_data===`media-add:${e.id}`));
+  const buttons=card.reply_markup.keyboard.flat();assert.equal(buttons.length,8);
+  assert.ok(buttons.some(b=>b.text==='➕ Add media'));assert.equal(card.reply_markup.inline_keyboard,undefined);
   assert.ok(buttons.some(b=>b.text==='📂 Open album app' && b.web_app));
   assert.ok(!buttons.some(b=>b.callback_data?.startsWith('r:')));
   assert.equal(f.bot.mediaAllowed(e,99),true);await f.cb(99,`media-add:${e.id}`);await f.msg(99,undefined,{photo:[{file_id:'one'}]});await f.msg(99,'/done');

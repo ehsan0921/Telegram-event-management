@@ -141,3 +141,5 @@ body.dark .guest-roster-row[data-status=yes]{background:#203c2e}body.dark .guest
 button.media-like-heart{background:transparent;color:var(--accent);border:0;box-shadow:none;padding:4px 8px;min-width:44px;min-height:44px;font-size:25px;line-height:1;}
 button.media-like-heart:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
 .media-like-count{align-self:center;color:var(--muted);font-size:12px;white-space:nowrap;}
+.media-save-bookmark{display:inline-flex;align-items:center;justify-content:center;background:transparent;color:var(--accent);border:0;box-shadow:none;min-width:44px;min-height:44px;padding:6px;}
+.media-save-bookmark:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}

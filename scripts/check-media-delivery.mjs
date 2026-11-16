@@ -47,6 +47,8 @@ try{
   assert.equal((await read('preferences',2)).mediaDelivery[album.id].received.length,2);
   await callback(2,'media-get','new');await settle();
   assert.equal(calls.filter(call=>call.method==='sendMediaGroup').length,1);
+  const mediaBeforeRefresh=calls.filter(call=>['sendPhoto','sendMediaGroup'].includes(call.method)).length;await message(2,'🔄 Refresh');await settle();
+  const albumKeyboard=calls.findLast(call=>call.method==='sendMessage' && call.reply_markup?.keyboard?.at(-1)?.at(-1)?.text==='🔄 Refresh');assert.ok(albumKeyboard);assert.deepEqual(albumKeyboard.reply_markup.keyboard.at(-1).map(button=>button.text),['🔕 Follow:OFF','⋯ More','🔄 Refresh']);assert.equal(calls.filter(call=>['sendPhoto','sendMediaGroup'].includes(call.method)).length,mediaBeforeRefresh);
   const auth=new URLSearchParams({auth_date:String(Math.floor(Date.now()/1000)),user:JSON.stringify({id:2,first_name:'Fictional viewer'})});
   const dataCheck=[...auth].sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>`${k}=${v}`).join('\n');
   const authKey=createHmac('sha256','WebAppData').update('fictional-token').digest();auth.set('hash',createHmac('sha256',authKey).update(dataCheck).digest('hex'));
@@ -73,6 +75,7 @@ try{
   const gallery=await api(2,'events/'+personal.id+'/gallery');assert.equal((await gallery.json()).media[0].liked,true);
   assert.equal((await api(3,'events/'+personal.id+'/gallery')).status,403);
   const copied=await api(2,'albums/'+personal.id+'/copies',{sourceEvent:album.id,mediaId:firstFile.id,requestId:crypto.randomUUID()});assert.equal(copied.status,200);const savedPhoto=(await copied.json()).ids[0];
+  const savedAlbums=await api(2,'albums/owned?sourceEvent='+album.id+'&mediaId='+firstFile.id);assert.ok((await savedAlbums.json()).albums.some(item=>item.id===personal.id && item.containsPhoto));
   assert.equal((await api(2,'collections/'+personal.id+'/access',{action:'regenerate',confirm:true,version:0})).status,200);
   const shared=await read('events',personal.id);await message(4,'/start p_'+shared.viewToken);await settle();
   const viewerGallery=await api(4,'events/'+personal.id+'/gallery');const visible=(await viewerGallery.json()).media;assert.equal(visible.length,1);assert.equal(visible[0].id,savedPhoto);assert.equal(visible[0].savedCopy,true);

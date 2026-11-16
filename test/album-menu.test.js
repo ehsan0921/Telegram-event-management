@@ -6,12 +6,12 @@ function fixture(){
   const e=photoCollection('Fictional album',1),data={events:{[e.id]:e},preferences:{2:{mediaAccess:{[e.id]:e.viewToken}},3:{mediaAccess:{[e.id]:e.uploadToken}}},sessions:{}},calls=[];
   const bot=new Bot({data},async(method,params)=>{calls.push({method,...params});return {};},'FictionalBot','https://example.test/app');
   const cb=(id,action,arg)=>bot.handle({callback_query:{id:'fictional',from:{id,first_name:'Fictional'},data:`${action}:${e.id}${arg?':'+arg:''}`}});
-  const last=()=>calls.at(-1),buttons=()=>last().reply_markup?.inline_keyboard?.flat() || [];
+  const last=()=>calls.at(-1),buttons=()=>(last().reply_markup?.inline_keyboard || last().reply_markup?.keyboard)?.flat() || [];
   return {e,data,calls,bot,cb,last,buttons};
 }
 test('album main menu uses the approved four readable rows and moves management into More',async()=>{
   const f=fixture();await f.cb(1,'v');
-  assert.deepEqual(f.last().reply_markup.inline_keyboard.map(row=>row.map(b=>b.text)),[['📂 Open album app'],['📥 Get all (0)','🆕 Get new (0)'],['➕ Add media','🔗 Share'],['🔔 Follow:ON','⋯ More']]);
+  assert.deepEqual(f.last().reply_markup.keyboard.map(row=>row.map(b=>b.text)),[['📂 Open album app'],['📥 Get all (0)','🆕 Get new (0)'],['➕ Add media','🔗 Share'],['🔔 Follow:ON','⋯ More','🔄 Refresh']]);
   assert.ok(f.buttons().every(button=>button.text.length<24));
   await f.cb(1,'album-more');assert.ok(f.buttons().some(b=>b.callback_data===`album-danger:${f.e.id}`));assert.ok(f.buttons().some(b=>b.text==='🏠 Main menu'));
   await f.cb(2,'album-more');assert.ok(f.buttons().some(b=>b.text==='🚪 Leave album'));assert.ok(!f.buttons().some(b=>b.text==='⚠️ Danger zone'));
@@ -37,7 +37,7 @@ test('explicit upload restrictions and disabled sharing are preserved without si
 test('event media gains the album controls under the existing event ID while the event card remains separate',async()=>{
   const f=fixture();delete f.e.kind;f.e.guests={2:{name:'Guest',status:'yes'}};
   const before=JSON.stringify(f.e);
-  await f.cb(1,'m','0');assert.deepEqual(f.last().reply_markup.inline_keyboard.slice(0,4).map(row=>row.map(b=>b.text)),[['📂 Open album app'],['📥 Get all (0)','🆕 Get new (0)'],['➕ Add media','🔗 Share'],['🔕 Follow:OFF','⋯ More']]);
+  await f.cb(1,'m','0');assert.deepEqual(f.last().reply_markup.keyboard.slice(0,4).map(row=>row.map(b=>b.text)),[['📂 Open album app'],['📥 Get all (0)','🆕 Get new (0)'],['➕ Add media','🔗 Share'],['🔕 Follow:OFF','⋯ More','🔄 Refresh']]);
   await f.cb(1,'album-share');assert.match(f.buttons()[0].text,/ON$/);assert.ok(f.buttons().find(b=>b.text==='Copy link').copy_text.text.includes('start=u_'));
   await f.cb(1,'album-share-set','off');assert.equal(f.buttons().find(b=>b.text==='Copy link').copy_text.text,`https://t.me/FictionalBot?startapp=gallery_${f.e.id}`);
   assert.equal(JSON.stringify(f.e),before);assert.equal(Object.keys(f.data.events).length,1);

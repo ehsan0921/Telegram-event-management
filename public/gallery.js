@@ -26,7 +26,7 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
     sends.set(key,task);return task;
   }
   const socialDialogs=new Set(),reactionStates=new Map();
-  function closeSocial(){for(const dialog of socialDialogs){dialog.close();dialog.remove();}socialDialogs.clear();reactionStates.clear();}
+  function closeSocial(){for(const dialog of socialDialogs){dialog.close();dialog.remove();}socialDialogs.clear();reactionStates.clear();bookmarkStates.clear();}
   function socialDialog(title){
     const dialog=document.createElement('dialog'),heading=element('h2',title),content=element('div'),status=element('p','','small muted'),close=action('Close',()=>dialog.close(),'secondary');
     status.setAttribute('role','status');dialog.setAttribute('aria-label',title);dialog.append(heading,content,status,close);document.body.append(dialog);socialDialogs.add(dialog);
@@ -46,6 +46,43 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
     function paint(){for(const button of state.buttons){button.textContent=state.liked?'\u2665':'\u2661';button.disabled=state.busy;button.setAttribute('aria-label',state.liked?'Unlike photo':'Like photo');button.setAttribute('aria-pressed',String(state.liked));}for(const count of state.lists){count.textContent=`${state.count} ${state.count===1?'like':'likes'}`;count.setAttribute('aria-live','polite');}}
     paint();
   }
+  const bookmarkStates=new Map();
+  function bookmark(id,file,parent){
+    const key=id+'/'+file.id;let state=bookmarkStates.get(key);if(!state){state={saved:!!file.isSaved,buttons:[]};bookmarkStates.set(key,state);}
+    const button=element('button','','media-save-bookmark');button.type='button';button.setAttribute('aria-haspopup','dialog');
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg'),path=document.createElementNS('http://www.w3.org/2000/svg','path');
+    for(const [name,value] of Object.entries({viewBox:'0 0 24 24',width:'20',height:'20','aria-hidden':'true'}))svg.setAttribute(name,value);
+    for(const [name,value] of Object.entries({d:'M6 3h12v18l-6-4-6 4V3Z',stroke:'currentColor','stroke-width':'1.8','stroke-linejoin':'round'}))path.setAttribute(name,value);
+    svg.append(path);button.append(svg);button.disabled=file.canSave!==true;button.onclick=()=>{if(!button.disabled)return choosePhotoAlbum(id,file,state);};state.buttons.push({button,path});parent.append(button);paintBookmark(state);
+  }
+  function paintBookmark(state){for(const {button,path} of state.buttons){path.setAttribute('fill',state.saved?'currentColor':'none');button.setAttribute('aria-pressed',String(state.saved));button.setAttribute('aria-label',state.saved?'Saved photo: choose album':'Save photo to album');button.title=state.saved?'Saved in your albums':'Save photo';}}
+  async function choosePhotoAlbum(sourceId,file,state){
+    const {dialog,content,status,close}=socialDialog('Save photo'),current=generation;
+    const select=element('select'),selectLabel=element('label','Album'),createOption=element('option','Create new'),title=element('input'),titleLabel=element('label','New album name'),save=element('button','Save','secondary');
+    createOption.value='__new__';select.append(createOption);select.value='__new__';selectLabel.append(select);title.type='text';title.maxLength=100;titleLabel.append(title);save.type='button';
+    content.append(selectLabel,titleLabel,element('p','A saved copy follows destination album access. Revoking source access does not recall it.','small muted'));dialog.insertBefore(save,close);
+    let busy=false,loading=true,createRequest=null,copyRequest=null;const albums=new Map();
+    function paint(){const creating=select.value==='__new__';titleLabel.hidden=!creating;title.hidden=!creating;title.disabled=busy || loading || !creating;select.disabled=busy || loading;save.disabled=busy || loading;close.disabled=busy;}
+    function option(album){if(albums.has(album.id))return;albums.set(album.id,album);const node=element('option',album.title+(album.containsPhoto?' (already saved)':''));node.value=album.id;select.append(node);}
+    select.onchange=()=>{paint();status.textContent=albums.get(select.value)?.containsPhoto?'This photo is already in that album.':'';};
+    dialog.oncancel=event=>{if(busy)event.preventDefault();};paint();
+    save.onclick=async()=>{
+      if(busy || loading || !dialog.isConnected)return;const creating=select.value==='__new__',name=title.value?.trim() || '';if(creating && !name){status.textContent='Enter an album name.';title.focus?.();return;}
+      busy=true;paint();let target=select.value,created=false;
+      try{
+        if(creating){if(!createRequest || createRequest.title!==name)createRequest={title:name,id:crypto.randomUUID()};status.textContent='Creating private album.';const result=await api('collections',{title:name,personal:true,requestId:createRequest.id});if(!dialog.isConnected || current!==generation)return;target=result.event.id;created=true;option({id:target,title:result.event.title,private:true});select.value=target;paint();}
+        if(!copyRequest || copyRequest.target!==target)copyRequest={target,id:crypto.randomUUID()};status.textContent='Saving photo.';
+        const result=await api(`albums/${target}/copies`,{sourceEvent:sourceId,mediaId:file.id,requestId:copyRequest.id});if(!dialog.isConnected || current!==generation)return;
+        if(result.ids?.length){state.saved=true;paintBookmark(state);const album=albums.get(target);if(album)album.containsPhoto=true;status.textContent=result.added?'Photo saved.':'This photo is already in that album.';}
+        else status.textContent='This earlier save was removed. Close and reopen to request a new save.';
+        try{await refreshAlbums?.();}catch{notice('Album list could not refresh. The save result above is unchanged.');}
+      }catch(error){if(dialog.isConnected)status.textContent=(created?'Album created. Photo save was not confirmed. ':'')+error.message;}
+      finally{busy=false;if(dialog.isConnected)paint();}
+    };
+    try{status.textContent='Loading albums.';const result=await api(`albums/owned?sourceEvent=${encodeURIComponent(sourceId)}&mediaId=${encodeURIComponent(file.id)}`);if(!dialog.isConnected || current!==generation)return;for(const album of result.albums)option(album);state.saved=result.albums.some(album=>album.containsPhoto);paintBookmark(state);loading=false;status.textContent='Choose an album, or create a new one.';paint();}
+    catch(error){if(dialog.isConnected){status.textContent=error.message;save.disabled=true;}}
+  }
+
   async function choosePersonalAlbum(sourceId,file=null){
     const {dialog,content,status,close}=socialDialog(file?'Add to personal album':'New personal album'),current=generation;
     const photo=!!file && (file.previewKind==='photo' || file.type==='photo');
@@ -127,7 +164,7 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
     };
     $('media-send').disabled=false;
     let social=$('photo-dialog').querySelector?.('.media-reactions');if(social)social.remove();
-    if(file.canLike){social=element('div','','event-actions media-reactions');reactions(id,file,social);$('photo-dialog').append(social);}
+    if(file.canLike || file.canSave){social=element('div','','event-actions media-reactions');reactions(id,file,social);if(file.canSave)bookmark(id,file,social);$('photo-dialog').append(social);}
     $('photo-dialog').showModal();
   }
   function mediaBlob(eventId, fileId,thumbnail=false) {
@@ -187,7 +224,8 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
         const buttons=element('div','','event-actions');
         const sendButton=iconAction('✈','Send to Telegram',async()=>{const current=generation,update=status=>{if(current===generation)notice(sendStatusText(status));};try{const result=await sendFile(id,file,update);update(result.status);}catch(error){if(current===generation)notice(error.message+' Delivery is not confirmed; check your chat before trying again.');}});
         buttons.append(sendButton);reactions(id,file,buttons);
-        if(gallery.socialFeatures){const addToAlbum=iconAction('+','Add to personal album',()=>choosePersonalAlbum(id,file));addToAlbum.setAttribute('aria-label',kind==='photo'?'Add this photo to a personal album':'Add this item to a personal album');addToAlbum.disabled=kind==='photo'?file.canSave!==true:file.canLink!==true;addToAlbum.title=kind==='photo'?'Save this one photo using your current access. The saved copy follows destination album permissions.':file.reference?'Open the original source album to link this item.':'The source owner must allow linking; current source access is still required.';buttons.append(addToAlbum);}
+        if(gallery.socialFeatures && kind==='photo')bookmark(id,file,buttons);
+        if(gallery.socialFeatures && kind!=='photo'){const addToAlbum=iconAction('+','Add to personal album',()=>choosePersonalAlbum(id,file));addToAlbum.setAttribute('aria-label',kind==='photo'?'Add this photo to a personal album':'Add this item to a personal album');addToAlbum.disabled=kind==='photo'?file.canSave!==true:file.canLink!==true;addToAlbum.title=kind==='photo'?'Save this one photo using your current access. The saved copy follows destination album permissions.':file.reference?'Open the original source album to link this item.':'The source owner must allow linking; current source access is still required.';buttons.append(addToAlbum);}
         if(gallery.canRemove)buttons.append(action('Remove from album',()=>removeAlbumMedia(id,file,gallery.mediaVersion).catch(error=>notice(error.message)),'secondary'));
         if(kind==='video')buttons.append(iconAction('▶','Play video',async()=>{const pending=++popupGeneration;try{const blob=await mediaBlob(id,file.id);if(current!==generation || pending!==popupGeneration)return;const url=URL.createObjectURL(blob);urls.add(url);showMedia(id,previewFile,blob,url);}catch(error){if(current===generation && pending===popupGeneration)notice(error.message);}}));
         body.append(buttons);card.append(body);list.append(card);

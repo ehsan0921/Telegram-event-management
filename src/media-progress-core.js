@@ -1,4 +1,5 @@
 import {randomBytes,createHash} from 'node:crypto';
+import {albumBottomRow} from './album-reply.js';
 const stateFor=(data,id,eid)=>data.preferences[id]?.mediaDelivery?.[eid];
 const active=item=>['queued','inflight','stopping'].includes(item.status);
 export function progressStats(job){
@@ -11,9 +12,9 @@ export function markProgress(data,t,status,dirty=true){
   const job=ownedProgress(data,t),item=job?.items[t.media];if(!item || item.status===status)return;
   item.status=status;if(dirty){job.revision++;job.dirty=true;}
 }
-export function progressKeyboard(job){
+export function progressKeyboard(job,bot,id){
   const s=progressStats(job);
-  return {keyboard:[[{text:`✖ Cancel · ${s.sent}/${s.total}`}]],resize_keyboard:true,is_persistent:true};
+  const controls=bot && albumBottomRow(bot,id);return {keyboard:[[{text:`✖ Cancel · ${s.sent}/${s.total}`}],...(controls?[controls]:[])],resize_keyboard:true,is_persistent:true};
 }
 const labelKey=text=>createHash('sha256').update(text).digest('hex').slice(0,24);
 function rememberLabel(pref,job){
@@ -23,6 +24,7 @@ function rememberLabel(pref,job){
     pref.mediaCancelLabels[key]=job.id;
   }else if(pref.mediaCancelLabels[key]!==job.id)pref.mediaCancelLabels[key]=null;
 }
+export function rememberAlbumCancelLabel(bot,id){const pref=bot.db.preferences[id],pointer=pref?.mediaKeyboard,job=pointer && pref.mediaDelivery?.[pointer.event]?.jobs?.[pointer.job];if(job && !job.cancelRequested && Object.values(job.items).some(active))rememberLabel(pref,job);}
 function currentJob(bot,id){
   const pref=bot.db.preferences[id],pointer=pref?.mediaKeyboard;
   const current=pointer && stateFor(bot.db,id,pointer.event)?.jobs?.[pointer.job];
@@ -49,7 +51,7 @@ export function progressPayload(bot,id,eid,job,initial=false){
     const rows=Object.entries(bot.db.preferences[id].mediaDelivery || {}).flatMap(([event,state])=>Object.values(state.jobs || {}).filter(j=>!j.cancelRequested && Object.values(j.items).some(active) && bot.mediaAllowed(bot.db.events[event],id) && bot.mediaCan(bot.db.events[event],id,'viewMedia')).map(j=>[{text:`Stop: ${bot.db.events[event].title.slice(0,32)} · ${progressStats(j).sent}/${progressStats(j).total}`,callback_data:`media-stop:${event}:${j.id}`}]));
     if(rows.length)return {chat_id:id,text:'Which delivery should stop? An older button may have the same counts.',disable_notification:true,reply_markup:{inline_keyboard:rows}};
   }
-  return {chat_id:id,text,disable_notification:true,reply_markup:current?progressKeyboard(current):bot.idleKeyboard(id)};
+  return {chat_id:id,text,disable_notification:true,reply_markup:current?progressKeyboard(current,bot,id):bot.idleKeyboard(id)};
 }
 export function startProgress(bot,id,e,files){
   const pref=bot.db.preferences[id],state=stateFor(bot.db,id,e.id);if(!state)return null;state.jobs ||= {};
