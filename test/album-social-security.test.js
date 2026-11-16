@@ -39,6 +39,17 @@ function fixture(t){
 
 const saveCopy=(f,requestId=randomUUID(),mediaId='111111111111')=>f.value(2,'albums/'+f.dest.id+'/copies',{sourceEvent:f.source.id,mediaId,requestId});
 
+test('saved state is loaded only from owned albums and duplicate identity survives a different source album',async t=>{
+ const f=fixture(t);assert.equal((await f.value(2,'events/'+f.source.id+'/gallery')).media[0].isSaved,false);const saved=await saveCopy(f);assert.equal((await f.value(2,'events/'+f.source.id+'/gallery')).media[0].isSaved,true);assert.equal((await f.value(3,'events/'+f.source.id+'/gallery')).media[0].isSaved,false);
+ const albums=await f.value(2,'albums/owned?sourceEvent='+f.source.id+'&mediaId=111111111111');assert.deepEqual(albums.albums.map(a=>[a.id,a.containsPhoto]),[[f.dest.id,true]]);assert.equal((await f.api(4,'albums/owned?sourceEvent='+f.source.id+'&mediaId=111111111111')).status,403);
+ const other=photoCollection('Fictional alternate source',2);other.media=[{...f.source.media[0],id:'999999999999'}];f.save('events',other.id,other);const again=await f.value(2,'albums/'+f.dest.id+'/copies',{sourceEvent:other.id,mediaId:'999999999999',requestId:randomUUID()});assert.equal(again.alreadyInAlbum,true);assert.equal(again.added,0);assert.deepEqual(again.ids,saved.ids);assert.equal(f.read('events',f.dest.id).media.length,1);
+});
+
+test('concurrent saves use one stored photo and own original media is already in its album',async t=>{
+ const f=fixture(t),results=await Promise.all([saveCopy(f),saveCopy(f)]);assert.equal(results.filter(r=>r.added===1).length,1);assert.equal(results.filter(r=>r.alreadyInAlbum).length,1);assert.equal(f.read('events',f.dest.id).media.length,1);
+ const own=await f.value(1,'albums/'+f.source.id+'/copies',{sourceEvent:f.source.id,mediaId:'111111111111',requestId:randomUUID()});assert.equal(own.alreadyInAlbum,true);assert.equal(own.added,0);assert.equal(f.read('events',f.source.id).media.length,2);
+});
+
 test('Share explains independent photo copies without changing link or upload settings',async t=>{
  const f=fixture(t),before=structuredClone(f.read('events',f.source.id));await f.cb(2,f.source.id,'album-share');const messages=f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage'").all().map(row=>JSON.parse(row.params));assert.ok(messages.some(message=>message.text?.includes('Revoking this link does not recall saved copies.')));assert.deepEqual(f.read('events',f.source.id),before);
 });

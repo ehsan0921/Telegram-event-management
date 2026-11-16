@@ -54,3 +54,7 @@ Telemetry separates media_scheduler_admitted.admissionMs from
 media_transport_result.elapsedMs. Neither log includes chat/user/media IDs.
 Synthetic tests cover artificial network latency and large fault workloads;
 their timing is not a measurement of production Telegram or phone clients.
+# Album refresh controls
+
+The album main menu uses Telegram's regular reply keyboard. Its last row is Follow:ON/OFF, More and 🔄 Refresh. Album Refresh reloads the current authorized album and its Get all/Get new counts; it does not request media, clear holds or replay prior delivery status. The explicit /refresh command remains available for delivery review. Legacy inline album callbacks continue to work. Delivery retains its scoped Cancel button, with album controls available below it, and restores the album keyboard afterward.
+

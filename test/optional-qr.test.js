@@ -4,7 +4,7 @@ import {mediaApi} from '../src/media-api.js';
 
 function fixture(qrEnabled){
   const event={id:'0123456789abcdef',owner:1,qrEnabled,guests:{2:{status:'yes'}},permissions:{uploadMedia:true},media:[]};
-  const env={BOT_USERNAME:'TestEvents_bot',DB:{prepare(sql){return {bind(){return this;},async first(){return sql.includes("kind='events'") ? {data:JSON.stringify(event)}:null;}};}}};
+  const env={BOT_USERNAME:'TestEvents_bot',DB:{prepare(sql){return {bind(){return this;},async first(){return sql.includes("kind='events'") ? {data:JSON.stringify(event)}:null;},async all(){return {results:[]};}};}}};
   return {event,env,request:new Request(`https://test/api/events/${event.id}/upload-qr`)};
 }
 

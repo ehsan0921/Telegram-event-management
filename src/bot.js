@@ -1,6 +1,7 @@
 import {visibleMedia} from './media-reference.js';
-import {startProgress,parseProgressText,progressTextAction} from './media-progress-core.js';
+import {startProgress,parseProgressText,progressTextAction,rememberAlbumCancelLabel} from './media-progress-core.js';
 import {albumMain,albumMenuCallback} from './album-menu.js';
+import {albumReplyMarkup,currentAlbum,albumTextAction} from './album-reply.js';
 import {paymentMethod,paidEvent} from './event-payment.js';
 import {qrPhoto} from './telegram-upload.js';
 import {albumMembers} from './album-members.js';
@@ -46,7 +47,7 @@ export class Bot {
   async long(id, text, markup) {
     for (let i = 0; i < text.length; i += 3900) await this.send(id, text.slice(i, i + 3900), i + 3900 >= text.length ? markup : undefined);
   }
-  idleKeyboard(id){return this.db.sessions[id]?this.inputKeyboard(this.db.sessions[id]):homeKeyboard();}
+  idleKeyboard(id){const session=this.db.sessions[id];return session && session.step!=='media'?this.inputKeyboard(session):albumReplyMarkup(this,id) || homeKeyboard();}
   inputKeyboard(s) {
     if (this.appUrl && (s.step === 'when' || (s.step === 'edit' && s.field === 'when'))) return reply([menu.picker], [menu.cancel]);
     if (s.step === 'phone') return reply([{ text: '📱 Share my phone number', request_contact: true }], [menu.skip, menu.cancel]);
@@ -95,8 +96,8 @@ export class Bot {
     return this.afterIdentity(id,e,s);
   }
   hasPending(id) { return Object.values(this.db.events).some(e => !this.db.preferences[id]?.hiddenEvents?.[e.id] && this.allowed(e,id) && !isManager(e,id) && invitationMode(e)!=='tickets' && !e.cancelled && e.guests[id]?.status === 'later'); }
-  home(id, text = 'Welcome to XEvents 🎉\nTap Create to make an event or media album, or My stuff to find yours.',immediate=false) { return this.api('sendMessage',{chat_id:id,text,reply_markup:homeKeyboard(),...(immediate?{__broadcastNotice:true}:{})}); }
-  session(id, value) { if (value) { if(value.step==='upload')value.uploadBatch ||= randomBytes(8).toString('hex');this.db.sessions[id] = value; } else delete this.db.sessions[id]; }
+  home(id, text = 'Welcome to XEvents 🎉\nTap Create to make an event or media album, or My stuff to find yours.',immediate=false) { if(this.db.preferences[id])delete this.db.preferences[id].activeAlbum;return this.api('sendMessage',{chat_id:id,text,reply_markup:homeKeyboard(),...(immediate?{__broadcastNotice:true}:{})}); }
+  session(id, value) { if(!['media','upload'].includes(value?.step) && this.db.preferences[id])delete this.db.preferences[id].activeAlbum;if (value) { if(value.step==='upload')value.uploadBatch ||= randomBytes(8).toString('hex');this.db.sessions[id] = value; } else delete this.db.sessions[id]; }
   uploadStatus(id, eid, message=this.uploadReceipt, saved) {
     const session=this.db.sessions[id];
     eid ||= session?.step==='upload' ? session.event : this.db.preferences[id]?.lastUploadEvent;
@@ -127,6 +128,7 @@ export class Bot {
   mediaCan(e,id,key) { return mediaCan(e,id,key,this.db.preferences[id]); }
   async mediaCard(id,e){
     if(!e || e.cancelled || !this.mediaAllowed(e,id) || !this.mediaCan(e,id,'viewMedia'))return this.home(id,'This media link is unavailable.');
+    this.db.preferences[id] ||= {};this.db.preferences[id].activeAlbum=e.id;rememberAlbumCancelLabel(this,id);
     return albumMain(this,id,e);
   }
   permissionKeyboard(e, prefix) {
@@ -339,6 +341,8 @@ export class Bot {
     const id = m.from.id;
     if (m.chat.type !== 'private') return this.send(m.chat.id, `Please use me in a private chat: https://t.me/${this.username}`);
     let text = clean(m.text, 3000);
+    const albumCommand=albumTextAction(text);
+    if(albumCommand){const album=currentAlbum(this,id);if(!album)return this.home(id,'Open an album to use its controls.');if(albumCommand.action==='refresh')return this.mediaCard(id,album);return this.callback({from:m.from,data:`${albumCommand.action}:${album.id}${albumCommand.arg?':'+albumCommand.arg:''}`});}
     const progressCommand=parseProgressText(text);if(progressCommand)return progressTextAction(this,id,progressCommand);
     if(text === '/start payments')text='/paysupport';
     if(text === '/start app')text='/app';

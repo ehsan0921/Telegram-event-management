@@ -1,22 +1,15 @@
-import {visibleMedia} from './media-reference.js';
 import {photoLinks,showsUploaders,uploadLink} from './permissions.js';
 import {mediaDeliveryState} from './media-delivery.js';
 import {isManager} from './cohosts.js';
+import {albumReplyMarkup} from './album-reply.js';
 const button=(text,callback_data)=>({text,callback_data});
 const keyboard=rows=>({inline_keyboard:rows});
 const linksFor=(bot,e)=>e.kind==='photos'?photoLinks(e,bot.username):e.cancelled?null:{viewer:`https://t.me/${bot.username}?startapp=gallery_${e.id}`,contributor:uploadLink(e,bot.username)};
 const canShareUploads=(bot,id,e)=>!!linksFor(bot,e)?.contributor && bot.mediaCan(e,id,'uploadMedia');
 export function albumMain(bot,id,e){
-  const state=mediaDeliveryState(bot.db,id,e.id),received=new Set(state.received);
-  const available=visibleMedia(bot.db,e,id);
-  const rows=[
-    [bot.appUrl?bot.miniButton('📂 Open album app',`?gallery=${e.id}`):button('📂 Open album app',`m:${e.id}:0`)],
-    [button(`📥 Get all (${available.length})`,`media-get:${e.id}:all`),button(`🆕 Get new (${available.filter(file=>!received.has(file.id)).length})`,`media-get:${e.id}:new`)],
-    [button('➕ Add media',`media-add:${e.id}`),button('🔗 Share',`album-share:${e.id}`)],
-    [button(`${state.follow?'🔔':'🔕'} Follow:${state.follow?'ON':'OFF'}`,`media-follow:${e.id}:${state.follow?'off':'on'}`),button('⋯ More',`album-more:${e.id}`)]
-  ];
-  if(e.kind!=='photos' && e.banner)return bot.api('sendPhoto',{chat_id:id,photo:e.banner,caption:e.title,reply_markup:keyboard(rows)});
-  return bot.send(id,e.title,keyboard(rows));
+  mediaDeliveryState(bot.db,id,e.id);
+  if(e.kind!=='photos' && e.banner)return bot.api('sendPhoto',{chat_id:id,photo:e.banner,caption:e.title,reply_markup:albumReplyMarkup(bot,id)});
+  return bot.send(id,e.title,albumReplyMarkup(bot,id));
 }
 export function albumShare(bot,id,e){
   const links=linksFor(bot,e),capable=canShareUploads(bot,id,e);

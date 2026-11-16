@@ -1,5 +1,6 @@
 import {cohostEntries} from './cohosts.js';
 import {savePhotoCopy} from './photo-copy.js';
+import {ownedPhotoAlbums,hasPhoto} from './photo-saved-state.js';
 import {rememberUser} from './admin.js';
 import {randomBytes} from 'node:crypto';
 import {mutateState,BusyError} from './worker-store.js';
@@ -50,8 +51,14 @@ export async function albumSocialApi(request,env,user){
  try{
   if(path==='/api/albums/owned'){
    if(request.method!=='GET')return response({error:'Not found.'},404);
-   const rows=await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND json_extract(data,'$.owner')=? AND json_extract(data,'$.kind')='photos'").bind(id).all();
-   return response({albums:rows.results.map(row=>JSON.parse(row.data)).filter(e=>!e.cancelled).map(e=>({id:e.id,title:e.title,private:e.sharingDisabled===true}))});
+   let file=null;
+   if(url.searchParams.has('sourceEvent') || url.searchParams.has('mediaId')){
+    const sourceId=url.searchParams.get('sourceEvent'),mediaId=url.searchParams.get('mediaId');if(!/^[a-f0-9]{16}$/.test(sourceId || '') || !/^[a-f0-9]{12}$/.test(mediaId || ''))fail('Choose a valid photo.');
+    const sourceRow=await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(sourceId).first(),source=sourceRow && JSON.parse(sourceRow.data);if(!source)fail('This photo is unavailable.',403);
+    const prefRow=await env.DB.prepare("SELECT data FROM records WHERE kind='preferences' AND id=?").bind(String(id)).first(),graph=await readMediaGraph(env,source,id,prefRow?JSON.parse(prefRow.data):{});
+    file=resolveMedia(graph,source,source.media?.find(item=>item.id===mediaId),id);if(!file || mediaPreview(file)!=='photo')fail('This photo is unavailable.',403);
+   }
+   const albums=await ownedPhotoAlbums(env,id);return response({albums:albums.map(e=>({id:e.id,title:e.title,private:e.sharingDisabled===true,...(file?{containsPhoto:hasPhoto(e,{...file,reference:undefined})}:{})}))});
   }
   const eid=(likes || manage)[1],row=await env.DB.prepare("SELECT data FROM records WHERE kind='events' AND id=?").bind(eid).first(),event=row && JSON.parse(row.data);
   if(likes){
