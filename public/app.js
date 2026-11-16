@@ -147,6 +147,7 @@ function format(e, zone = selectedZone()) {
   return text;
 }
 function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener'); }
+function loginRecoveryLink(botLink,albumId){if(!/^https:\/\/t\.me\/[A-Za-z0-9_]{5,32}$/.test(botLink))return null;return botLink+'?start='+(/^[a-f0-9]{16}$/.test(albumId || '')?'albumapp_'+albumId:'app');}
 function appendPhotoLinks(node,event){
   node.append(element('p','Anyone who can view a photo can save it to their own album and share that saved copy. Revoking this album link stops future source access; it does not recall existing saved copies.','small muted'));
   if(event.sharingDisabled)node.append(element('p','PRIVATE · CREATOR ONLY','tag'));
@@ -1205,10 +1206,11 @@ $('profile-photo-remove').onclick=async()=>{const button=$('profile-photo-remove
 $('another-event').onclick = () => go('events');
 setupPhotoCreation();
 if (!initData) {
-  notice('This launch did not include your Telegram login. Reopen using App in the bot menu or the App button in a message.');
+  notice('This launch did not include your Telegram login. Use the secure button below or App in the bot menu.');
   const empty=element('div','Your events are private. Use the authenticated App button to load them.','empty');
   const botLink=$('telegram-bot-link')?.getAttribute('href') || '';
-  if(/^https:\/\/t\.me\/[A-Za-z0-9_]{5,32}$/.test(botLink))empty.append(action('App',()=>{const url=botLink+'?start=app';if(tg?.openTelegramLink)tg.openTelegramLink(url);else window.open(url,'_blank','noopener');}));
+  const recovery=loginRecoveryLink(botLink,query.get('gallery'));
+  if(recovery)empty.append(action(query.get('gallery')?'Open album app':'App',()=>{if(tg?.openTelegramLink)tg.openTelegramLink(recovery);else window.open(recovery,'_blank','noopener');}));
   $('event-list').replaceChildren(empty);
   $('home-view').hidden=true;$('events-view').hidden=false;
   $('save-event').disabled = true; $('save-zone').disabled = true; $('refresh').disabled = true;

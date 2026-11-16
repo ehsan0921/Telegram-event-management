@@ -80,7 +80,7 @@ test('My stuff lists event and gallery buttons before opening details and rechec
   assert.equal(f.calls.length,2);
   const buttons=f.calls.at(-1).reply_markup.inline_keyboard.flat();
   assert.deepEqual(buttons.map(b=>[b.text,b.callback_data]),[['Event: '+e.title,'v:'+e.id],['Media album: '+album.title,'v:'+album.id],['Media album: '+e.title,'m:'+e.id+':0']]);
-  await f.cb(1,'m:'+e.id+':0');assert.ok(f.calls.at(-1).reply_markup.keyboard.flat().some(b=>b.web_app?.url.endsWith('?gallery='+e.id)));
+  await f.cb(1,'m:'+e.id+':0');assert.ok(f.calls.at(-1).reply_markup.keyboard.flat().some(b=>b.text==='📂 Open album app' && !b.web_app));await f.cb(1,'album-app:'+e.id);assert.ok(f.calls.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.web_app?.url.endsWith('?gallery='+e.id)));
   album.viewToken='a'.repeat(32);
   await f.cb(1,'v:'+album.id);
   assert.ok(!f.calls.at(-1).reply_markup.inline_keyboard?.flat().some(b=>b.web_app));

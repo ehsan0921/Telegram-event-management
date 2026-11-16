@@ -39,6 +39,12 @@ function fixture(t){
 
 const saveCopy=(f,requestId=randomUUID(),mediaId='111111111111')=>f.value(2,'albums/'+f.dest.id+'/copies',{sourceEvent:f.source.id,mediaId,requestId});
 
+test('Album App secure launch preserves gallery route and signed auth; missing or forged launch login remains rejected',async t=>{
+ const f=fixture(t);await f.cb(2,f.source.id,'v');const menu=JSON.parse(f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage' ORDER BY rowid DESC LIMIT 1").get().params);assert.deepEqual(menu.reply_markup.keyboard[0][0],{text:'📂 Open album app'});
+ await f.msg(2,'📂 Open album app');const launch=JSON.parse(f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage' ORDER BY rowid DESC LIMIT 1").get().params);assert.equal(launch.reply_markup.inline_keyboard[0][0].web_app.url,'https://fictional.test/app?gallery='+f.source.id);
+ for(const Authorization of ['tma ','tma user=%7B%22id%22%3A2%7D']){const response=await miniApi(new Request('https://fictional.test/api/events/'+f.source.id+'/gallery',{headers:{Authorization}}),f.env);assert.equal(response.status,401);}assert.equal((await f.api(2,'events/'+f.source.id+'/gallery')).status,200);assert.equal(f.calls.filter(call=>['sendPhoto','sendMediaGroup'].includes(call.method)).length,0);
+});
+
 test('saved state is loaded only from owned albums and duplicate identity survives a different source album',async t=>{
  const f=fixture(t);assert.equal((await f.value(2,'events/'+f.source.id+'/gallery')).media[0].isSaved,false);const saved=await saveCopy(f);assert.equal((await f.value(2,'events/'+f.source.id+'/gallery')).media[0].isSaved,true);assert.equal((await f.value(3,'events/'+f.source.id+'/gallery')).media[0].isSaved,false);
  const albums=await f.value(2,'albums/owned?sourceEvent='+f.source.id+'&mediaId=111111111111');assert.deepEqual(albums.albums.map(a=>[a.id,a.containsPhoto]),[[f.dest.id,true]]);assert.equal((await f.api(4,'albums/owned?sourceEvent='+f.source.id+'&mediaId=111111111111')).status,403);
