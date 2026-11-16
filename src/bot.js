@@ -383,6 +383,8 @@ export class Bot {
     else if (current && text === menu.done && current.step === 'upload') text = '/done';
     const command = text.split(/\s/)[0].split('@')[0];
     if(command==='/refresh'){
+      const delivery=Object.values(this.db.preferences[id]?.mediaDelivery || {}).some(state=>Object.keys(state.pending || {}).length || Object.keys(state.jobs || {}).length || state.received?.length);
+      if(delivery)return refreshMedia(this,id);
       if(current?.step==='upload')return this.uploadStatus(id,current.event);
       if(current)return this.prompt(id,'Your current input is unchanged. Continue below, or use /cancel to leave this step.');
       return refreshMedia(this,id);

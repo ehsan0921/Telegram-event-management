@@ -1,3 +1,4 @@
+import {deliverMediaGroup} from '../src/media-group.js';
 import {progressStats,progressKeyboard} from '../src/media-progress-core.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -542,4 +543,34 @@ test('Get new recovers a stale runtime hold while active uncertainty still requi
  const response=await mediaApi(new Request('https://fictional.test/api/events/'+other.id+'/media/eeeeeeeeeeee/send',{method:'POST'}),f.env,{id:2});assert.equal(response.status,200);await drainOutbox(f.env);
  assert.equal(f.requests.length,calls+1);assert.equal(f.requests.at(-1).params.photo,'fictional-authorized');assert.equal(Object.keys(f.state(2).uncertain).length,2);
 
+});
+
+test('194-file incident: refresh reports current job, preserves input, holds 54 files and never retries the uncertain ten',async t=>{
+ const f=batchFixture(t,Array(194).fill('photo'));const pref=f.read('preferences',2);pref.mediaDelivery={[f.album.id]:{received:f.album.media.map(x=>x.id),pending:{},follow:false}};f.save('preferences',2,pref);
+ let attempts=0;const originalFetch=globalThis.fetch;t.mock.method(globalThis,'fetch',async(url,options)=>{if(String(url).endsWith('/sendMediaGroup') && ++attempts===14)throw new DOMException('Fictional','TimeoutError');return originalFetch(url,options);});
+ await f.cb(2,'media-get','all');await drainOutbox(f.env);const state=f.state(2),job=Object.values(state.jobs).at(-1);assert.equal(progressStats(job).sent,130);assert.equal(progressStats(job).queued,54);assert.equal(progressStats(job).unknown,10);assert.equal(attempts,14);assert.equal(Object.values(state.uncertainDetails)[0].kind,'timeout');
+ assert.equal(f.db.prepare("SELECT count(*) AS n FROM outbox WHERE json_type(params,'$.__mediaGroup') IS NOT NULL").get().n,6);
+ f.save('sessions',2,{step:'phone',event:f.album.id,fictionalInput:'preserve'});const before3=f.read('preferences',3);let update=700000;
+ for(let i=0;i<3;i++){await processUpdate(f.env,{update_id:update++,message:{chat:{id:2,type:'private'},from:{id:2},text:'/refresh'}});await drainOutbox(f.env);}
+ const summaries=f.ui.filter(x=>x.params.text?.startsWith('Current/recent media deliveries:'));assert.equal(summaries.length,3);for(const row of summaries){assert.match(row.params.text,/130\/194 confirmed, 54 queued \(paused for review\), 0 in flight/);assert.match(row.params.text,/10 unconfirmed/);}
+ assert.ok(!f.ui.some(x=>x.params.text?.includes('Your current input is unchanged')));assert.ok(!f.ui.some(x=>x.params.text?.startsWith('Delivery of 10 files could not be confirmed')));assert.equal(attempts,14);assert.deepEqual(f.read('sessions',2),{step:'phone',event:f.album.id,fictionalInput:'preserve'});assert.deepEqual(f.read('preferences',3),before3);assert.equal(Object.keys(f.state(2).uncertain).length,10);
+ await f.cb(3,'media-get','all');await drainOutbox(f.env);assert.equal(f.state(3).received.length,194);assert.equal(Object.keys(f.state(2).uncertain).length,10);assert.equal(progressStats(Object.values(f.state(2).jobs).at(-1)).queued,54);
+});
+
+for(const outcome of ['ambiguous','429'])test('legacy uncertainty notice is deduplicated across recovery and '+outcome,async t=>{
+ const f=batchFixture(t,['photo','photo']);f.mode='timeout';await f.cb(2,'media-get','all');const raw=f.db.prepare("SELECT * FROM outbox WHERE json_type(params,'$.__mediaGroup') IS NOT NULL").get(),tracking=JSON.parse(raw.params).__mediaGroup;
+ const pref=f.read('preferences',2);pref.mediaDelivery[f.album.id].jobs={};delete pref.mediaKeyboard;f.save('preferences',2,pref);f.db.prepare("DELETE FROM outbox WHERE json_type(params,'$.__mediaProgress') IS NOT NULL").run();
+ let warnings=0;const originalFetch=globalThis.fetch;t.mock.method(globalThis,'fetch',async(url,options)=>{const params=JSON.parse(options.body);if(params.text?.startsWith('Delivery of 2 files could not be confirmed')){warnings++;if(outcome==='ambiguous')throw new Error('Fictional lost notice receipt');if(warnings===1)return Response.json({ok:false,error_code:429,parameters:{retry_after:7}});}return originalFetch(url,options);});
+ await drainOutbox(f.env);const mediaCalls=f.requests.length;await deliverMediaGroup(f.env,{id:raw.id,params:JSON.stringify({__mediaGroup:tracking,__mediaGroupAttempted:true})},async()=>{throw Error('Must not resend media');});
+ f.retryNow();await drainOutbox(f.env);f.retryNow();await drainOutbox(f.env);assert.equal(warnings,outcome==='429'?2:1);assert.equal(f.requests.length,mediaCalls);assert.equal(Object.keys(f.state(2).uncertain).length,2);
+});
+
+test('partial receipts and concurrent refresh preserve per-file uncertainty and no new media attempts',async t=>{
+ const f=batchFixture(t,Array(11).fill('photo'));f.mode='partial';await f.cb(2,'media-get','all');await drainOutbox(f.env);assert.equal(f.requests.length,1);assert.equal(Object.values(f.state(2).uncertainDetails)[0].kind,'invalid_receipt');
+ await Promise.all([800001,800002].map(update_id=>processUpdate(f.env,{update_id,message:{chat:{id:2,type:'private'},from:{id:2},text:'/refresh'}})));await drainOutbox(f.env);assert.equal(f.requests.length,1);assert.equal(Object.keys(f.state(2).uncertain).length,10);assert.equal(progressStats(Object.values(f.state(2).jobs).at(-1)).queued,1);assert.equal(f.state(2).received.length,0);
+});
+
+test('stale recovered uncertainty cannot override a confirmed receipt or re-block a resolved chat',async t=>{
+ const f=batchFixture(t,['photo','photo']);await f.cb(2,'media-get','all');const row=f.db.prepare("SELECT * FROM outbox WHERE json_type(params,'$.__mediaGroup') IS NOT NULL").get(),tracking=JSON.parse(row.params).__mediaGroup;await drainOutbox(f.env);assert.equal(f.state(2).received.length,2);
+ await deliverMediaGroup(f.env,{id:row.id,params:JSON.stringify({__mediaGroup:tracking,__mediaGroupAttempted:true})},async()=>{throw Error('Must not send');});assert.equal(f.state(2).received.length,2);assert.deepEqual(f.state(2).uncertain || {},{});assert.notEqual(f.read('media_chat_state',2).blocked,1);
 });

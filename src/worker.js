@@ -31,8 +31,8 @@ async function telegram(env, method, params, timeout) {
     response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
       method: 'POST', ...telegramPayload(params), signal: AbortSignal.timeout(timeout ?? (method === 'answerPreCheckoutQuery' ? 5000 : 10000))
     });
-  } catch { return { ok: false, error_code: 503 }; }
-  try { return await response.json(); } catch { return { ok: false, error_code: 503 }; }
+  } catch(error) { return { ok: false, error_code: 503, transportFailure:['TimeoutError','AbortError'].includes(error?.name)?'timeout':'network' }; }
+  try { return await response.json(); } catch { return { ok: false, error_code: 503, transportFailure:'invalid_response' }; }
 }
 
 export async function processUpdate(env, update) {
@@ -114,7 +114,7 @@ export async function drainOutbox(env, immediate=false, attempt=0, timing) {
     if (now() > deadline || due > Math.floor(Date.now() / 1000)) break deliveryLoop;
     const row = await env.DB.prepare('UPDATE outbox SET due=unixepoch()+60, attempts=attempts+1 WHERE id=? AND due<=unixepoch() RETURNING *').bind(id).first();
     if (!row) continue;
-    const {__mediaDelivery:mediaTracking,__mediaDelivered:mediaDelivered,__broadcast:tracking,__broadcastDelete:deletion,__broadcastNotice,__broadcastDelivered:delivered,...deliveryParams}=JSON.parse(row.params);
+    const {__mediaUncertainNotice:uncertainNotice,__mediaUncertainNoticeAttempted:uncertainNoticeAttempted,__mediaDelivery:mediaTracking,__mediaDelivered:mediaDelivered,__broadcast:tracking,__broadcastDelete:deletion,__broadcastNotice,__broadcastDelivered:delivered,...deliveryParams}=JSON.parse(row.params);
     try{
     const grouped=await prepareMediaGroup(env,row);
     if(grouped==='deferred')continue;
@@ -137,6 +137,8 @@ export async function drainOutbox(env, immediate=false, attempt=0, timing) {
       });
       if(!allowed){await env.DB.prepare('DELETE FROM outbox WHERE id=?').bind(id).run();continue;}
     }
+    if(uncertainNotice && uncertainNoticeAttempted){await env.DB.prepare('DELETE FROM outbox WHERE id=?').bind(id).run();continue;}
+    if(uncertainNotice)await env.DB.prepare('UPDATE outbox SET params=? WHERE id=?').bind(JSON.stringify({...JSON.parse(row.params),__mediaUncertainNoticeAttempted:true}),id).run();
     let result = delivered || mediaDelivered ? {ok:true,result:{message_id:delivered || mediaDelivered}} : await telegram(env, row.method, deliveryParams);
     if(mediaTracking && result.ok){
       if(!mediaDelivered){
@@ -164,7 +166,8 @@ export async function drainOutbox(env, immediate=false, attempt=0, timing) {
       const params=JSON.parse(row.params);
       await mutateState(env, (data,bot) => refundResult(bot,params.user_id,params.telegram_payment_charge_id,result.ok));
     }
-    if (result.ok || [400, 403].includes(result.error_code)) {
+    if(uncertainNotice && result.error_code===429)await env.DB.prepare('UPDATE outbox SET params=? WHERE id=?').bind(row.params,id).run();
+    if (result.ok || [400, 403].includes(result.error_code) || uncertainNotice && result.error_code!==429) {
       if(mediaTracking && !result.ok)await mutateState(env,data=>mediaDeliveryResult(data,mediaTracking,false));
       if(deletion || tracking && !result.ok){
         const target=deletion || tracking;

@@ -1,4 +1,4 @@
-import {markProgress,ownedProgress} from './media-progress-core.js';
+import {markProgress,ownedProgress,progressStats,reconcileProgress} from './media-progress-core.js';
 import {randomBytes} from 'node:crypto';
 import {mediaMethods,mediaPayload} from './media-preview.js';
 import {showsUploaders} from './permissions.js';
@@ -85,18 +85,16 @@ export async function queueMediaFiles(bot,id,e,files){
 }
 
 export async function refreshMedia(bot,id){
-  const rows=[];let received=0,pending=0,uncertain=0,stopping=0;
+  const rows=[];let total=0,received=0,pending=0,inflight=0,uncertain=0,stopping=0,failed=0,cancelled=0,allUnknown=0;
   for(const [eid,state] of Object.entries(bot.db.preferences[id]?.mediaDelivery || {})){
     const e=bot.db.events[eid];if(!bot.mediaAllowed(e,id) || !bot.mediaCan(e,id,'viewMedia'))continue;
-    received+=state.received.length;
-    const unknown=Object.entries(state.uncertain || {}).filter(([mid,token])=>state.pending[mid]===token).length;
-    const stopped=Object.entries(state.cancelled || {}).filter(([mid,token])=>state.pending[mid]===token && state.uncertain?.[mid]!==token).length;
-    stopping+=stopped;uncertain+=unknown;pending+=Math.max(0,Object.keys(state.pending).length-unknown-stopped);
-    const active=Object.entries(state.pending).filter(([mid,token])=>state.uncertain?.[mid]!==token && state.cancelled?.[mid]!==token).length;
-
-    if(unknown)rows.push([{text:`Review unconfirmed: ${e.title}`,callback_data:`media-retry:${eid}:review`}]);
+    const unknown=Object.entries(state.uncertain || {}).filter(([mid,token])=>state.pending[mid]===token).length;allUnknown+=unknown;
+    const job=Object.values(state.jobs || {}).sort((a,b)=>b.number-a.number)[0];
+    if(job){reconcileProgress(state,job);const s=progressStats(job);total+=s.total;received+=s.sent;pending+=s.queued;inflight+=s.inflight;uncertain+=s.unknown+s.partial;stopping+=s.stopping;failed+=s.failed;cancelled+=s.cancelled;}
+    else{const stopped=Object.entries(state.cancelled || {}).filter(([mid,token])=>state.pending[mid]===token && state.uncertain?.[mid]!==token).length;received+=state.received.length;total+=state.received.length+Object.keys(state.pending).length;uncertain+=unknown;stopping+=stopped;pending+=Math.max(0,Object.keys(state.pending).length-unknown-stopped);}
+    if(unknown)rows.push([{text:'Review unconfirmed: '+e.title,callback_data:'media-retry:'+eid+':review'}]);
   }
-  return bot.send(id,`Media delivery: ${received} files confirmed, ${pending} queued, ${stopping} stopping, ${uncertain} unconfirmed. Refresh does not request or resend files.${uncertain?' Check your chat before choosing a retry; unconfirmed files may already be there.':''}`,{inline_keyboard:rows});
+  return bot.send(id,'Current/recent media deliveries: '+received+'/'+total+' confirmed, '+pending+' queued'+(allUnknown && pending?' (paused for review)':'')+', '+inflight+' in flight, '+stopping+' stopping, '+uncertain+' unconfirmed, '+failed+' failed, '+cancelled+' cancelled.'+(allUnknown>uncertain?' Another '+(allUnknown-uncertain)+' earlier files remain unconfirmed.':'')+' Refresh does not request or resend files.'+(allUnknown?' Check your chat before choosing a retry; unconfirmed files may already be there.':''),{inline_keyboard:rows});
 }
 
 export function cancelMedia(bot,id,e,generation){
