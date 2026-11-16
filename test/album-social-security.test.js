@@ -40,7 +40,7 @@ function fixture(t){
 const saveCopy=(f,requestId=randomUUID(),mediaId='111111111111')=>f.value(2,'albums/'+f.dest.id+'/copies',{sourceEvent:f.source.id,mediaId,requestId});
 
 test('Album App secure launch preserves gallery route and signed auth; missing or forged launch login remains rejected',async t=>{
- const f=fixture(t);await f.cb(2,f.source.id,'v');const menu=JSON.parse(f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage' ORDER BY rowid DESC LIMIT 1").get().params);assert.deepEqual(menu.reply_markup.keyboard[0][0],{text:'📂 Open album app'});
+ const f=fixture(t);await f.cb(2,f.source.id,'v');const menu=JSON.parse(f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage' ORDER BY rowid DESC LIMIT 1").get().params);assert.equal(menu.reply_markup.inline_keyboard[0][0].web_app.url,'https://fictional.test/app?gallery='+f.source.id);assert.equal(menu.reply_markup.keyboard,undefined);
  await f.msg(2,'📂 Open album app');const launch=JSON.parse(f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage' ORDER BY rowid DESC LIMIT 1").get().params);assert.equal(launch.reply_markup.inline_keyboard[0][0].web_app.url,'https://fictional.test/app?gallery='+f.source.id);
  for(const Authorization of ['tma ','tma user=%7B%22id%22%3A2%7D']){const response=await miniApi(new Request('https://fictional.test/api/events/'+f.source.id+'/gallery',{headers:{Authorization}}),f.env);assert.equal(response.status,401);}assert.equal((await f.api(2,'events/'+f.source.id+'/gallery')).status,200);assert.equal(f.calls.filter(call=>['sendPhoto','sendMediaGroup'].includes(call.method)).length,0);
 });

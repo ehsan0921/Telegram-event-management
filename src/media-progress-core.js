@@ -1,5 +1,4 @@
 import {randomBytes,createHash} from 'node:crypto';
-import {albumBottomRow} from './album-reply.js';
 const stateFor=(data,id,eid)=>data.preferences[id]?.mediaDelivery?.[eid];
 const active=item=>['queued','inflight','stopping'].includes(item.status);
 export function progressStats(job){
@@ -14,7 +13,7 @@ export function markProgress(data,t,status,dirty=true){
 }
 export function progressKeyboard(job,bot,id){
   const s=progressStats(job);
-  const controls=bot && albumBottomRow(bot,id);return {keyboard:[[{text:`✖ Cancel · ${s.sent}/${s.total}`}],...(controls?[controls]:[])],resize_keyboard:true,is_persistent:true};
+  return {keyboard:[[{text:`✖ Cancel · ${s.sent}/${s.total}`}]],resize_keyboard:true,is_persistent:true};
 }
 const labelKey=text=>createHash('sha256').update(text).digest('hex').slice(0,24);
 function rememberLabel(pref,job){

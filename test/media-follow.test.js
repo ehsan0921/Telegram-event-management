@@ -46,9 +46,9 @@ test('viewer and contributor menus share layout while viewers never receive cont
   await f.cb(2,'v');await f.cb(3,'v');
   const menus=f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage' ORDER BY rowid").all().map(row=>JSON.parse(row.params));
   const viewer=menus[0],contributor=menus[1];
-  assert.deepEqual(viewer.reply_markup.keyboard[1].map(b=>b.text),['📥 Get all (1)','🆕 Get new (1)']);
-  assert.deepEqual(viewer.reply_markup.keyboard[0][0],{text:'📂 Open album app'});assert.ok(viewer.reply_markup.keyboard.flat().every(button=>!button.web_app));
-  assert.deepEqual(viewer.reply_markup.keyboard.at(-1).map(b=>b.text),['🔔 Follow:ON','⋯ More','🔄 Refresh']);assert.equal(viewer.reply_markup.inline_keyboard,undefined);
+  assert.deepEqual(viewer.reply_markup.inline_keyboard[1].map(b=>b.text),['📥 Get all (1)','🆕 Get new (1)']);
+  assert.equal(viewer.reply_markup.inline_keyboard[0][0].web_app.url,'https://example.test/app?gallery='+f.album.id);
+  assert.deepEqual(viewer.reply_markup.inline_keyboard.at(-1).map(b=>b.text),['🔔 Follow:ON','⋯ More','🔄 Refresh']);assert.equal(viewer.reply_markup.keyboard,undefined);
   assert.ok(!JSON.stringify(viewer).includes(f.album.uploadToken));assert.ok(JSON.stringify(viewer).includes('➕ Add media'));
   assert.ok(JSON.stringify(contributor).includes('➕ Add media'));assert.ok(!JSON.stringify(contributor).includes(f.album.uploadToken));
   assert.ok(JSON.stringify(viewer).includes('Follow:ON'));assert.ok(JSON.stringify(contributor).includes('Follow:ON'));
@@ -153,7 +153,7 @@ test('album reply Refresh reloads current counts without old delivery status, me
  const f=batchFixture(t,['photo']);await f.cb(2,'v');const pref=f.read('preferences',2),state=pref.mediaDelivery[f.album.id];state.received=[f.album.media[0].id];state.pending={'999999999999':'fictional-old'};state.uncertain={'999999999999':'fictional-old'};state.jobs={old:{id:'old',number:1,items:{'999999999999':{token:'fictional-old',status:'unconfirmed'}},revision:1,dirty:false,notice:{disabled:true,text:'Old unrelated error'}}};f.save('preferences',2,pref);f.save('media_chat_state',2,{blocked:1});const before=structuredClone(state);
  f.album.media.push({id:'222222222222',type:'photo',fileId:'fictional-new'});f.save('events',f.album.id,f.album);
  for(const update_id of [910000,910001])await processUpdate(f.env,{update_id,message:{chat:{id:2,type:'private'},from:{id:2},text:'🔄 Refresh'}});
- const messages=f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage' ORDER BY rowid").all().map(row=>JSON.parse(row.params)),last=messages.at(-1);assert.equal(last.text,f.album.title);assert.deepEqual(last.reply_markup.keyboard[1].map(b=>b.text),['📥 Get all (2)','🆕 Get new (1)']);assert.equal(last.reply_markup.inline_keyboard,undefined);assert.ok(messages.every(m=>!m.text.includes('Old unrelated error') && !m.text.includes('Current/recent media deliveries') && !m.text.includes('Your current input')));assert.deepEqual(f.state(2),before);assert.equal(f.read('media_chat_state',2).blocked,1);assert.equal(f.requests.length,0);assert.equal(f.db.prepare("SELECT count(*) AS n FROM outbox WHERE method='sendMediaGroup' OR method='sendPhoto'").get().n,0);
+ const messages=f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage' ORDER BY rowid").all().map(row=>JSON.parse(row.params)),last=messages.at(-1);assert.equal(last.text,f.album.title);assert.deepEqual(last.reply_markup.inline_keyboard[1].map(b=>b.text),['📥 Get all (2)','🆕 Get new (1)']);assert.equal(last.reply_markup.keyboard,undefined);assert.ok(messages.every(m=>!m.text.includes('Old unrelated error') && !m.text.includes('Current/recent media deliveries') && !m.text.includes('Your current input')));assert.deepEqual(f.state(2),before);assert.equal(f.read('media_chat_state',2).blocked,1);assert.equal(f.requests.length,0);assert.equal(f.db.prepare("SELECT count(*) AS n FROM outbox WHERE method='sendMediaGroup' OR method='sendPhoto'").get().n,0);
 });
 
 test('reply Follow is scoped and stale presses are idempotent; home makes old album controls harmless',async t=>{
@@ -161,9 +161,9 @@ test('reply Follow is scoped and stale presses are idempotent; home makes old al
  await text(2,'/start');assert.equal(f.read('preferences',2).activeAlbum,undefined);await text(2,'🔄 Refresh');const last=f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage' ORDER BY rowid DESC LIMIT 1").get();assert.equal(JSON.parse(last.params).text,'Open an album to use its controls.');assert.equal(f.state(2).follow,false);
 });
 
-test('delivery keeps Cancel and the album Follow More Refresh row; album Refresh never retries a limited batch',async t=>{
- const f=batchFixture(t,Array(11).fill('photo'));await f.cb(2,'v');f.mode='429';await f.cb(2,'media-get','all');await drainOutbox(f.env);assert.equal(f.requests.length,1);const control=f.ui.find(call=>call.params.reply_markup?.keyboard?.[0]?.[0]?.text.startsWith('✖ Cancel'));assert.ok(control);assert.deepEqual(control.params.reply_markup.keyboard.at(-1).map(b=>b.text),['🔔 Follow:ON','⋯ More','🔄 Refresh']);
- await processUpdate(f.env,{update_id:930000,message:{chat:{id:2,type:'private'},from:{id:2},text:'🔄 Refresh'}});assert.equal(f.requests.length,1);const last=JSON.parse(f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage' ORDER BY rowid DESC LIMIT 1").get().params);assert.match(last.reply_markup.keyboard[0][0].text,/^✖ Cancel/);assert.equal(last.reply_markup.keyboard.at(-1).at(-1).text,'🔄 Refresh');assert.equal(Object.keys(f.state(2).pending).length,11);
+test('delivery keeps only Cancel in reply keyboard and album controls inline; album Refresh never retries a limited batch',async t=>{
+ const f=batchFixture(t,Array(11).fill('photo'));await f.cb(2,'v');f.mode='429';await f.cb(2,'media-get','all');await drainOutbox(f.env);assert.equal(f.requests.length,1);const control=f.ui.find(call=>call.params.reply_markup?.keyboard?.[0]?.[0]?.text.startsWith('✖ Cancel'));assert.ok(control);assert.equal(control.params.reply_markup.keyboard.length,1);
+ await processUpdate(f.env,{update_id:930000,message:{chat:{id:2,type:'private'},from:{id:2},text:'🔄 Refresh'}});assert.equal(f.requests.length,1);const last=JSON.parse(f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage' ORDER BY rowid DESC LIMIT 1").get().params);assert.equal(last.reply_markup.inline_keyboard.at(-1).at(-1).callback_data,'album-open:'+f.album.id);assert.equal(last.reply_markup.keyboard,undefined);assert.equal(Object.keys(f.state(2).pending).length,11);
 });
 
 test('200 photos queue and deliver as twenty ordered albums with existing file IDs',async t=>{

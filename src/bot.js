@@ -128,7 +128,10 @@ export class Bot {
   mediaCan(e,id,key) { return mediaCan(e,id,key,this.db.preferences[id]); }
   async mediaCard(id,e){
     if(!e || e.cancelled || !this.mediaAllowed(e,id) || !this.mediaCan(e,id,'viewMedia'))return this.home(id,'This media link is unavailable.');
-    this.db.preferences[id] ||= {};this.db.preferences[id].activeAlbum=e.id;rememberAlbumCancelLabel(this,id);
+    this.db.preferences[id] ||= {};const pref=this.db.preferences[id];
+    // Clear only a previously issued album keyboard, never a live Cancel control.
+    if(pref.activeAlbum && !pref.albumControlsInline && !albumReplyMarkup(this,id))await this.send(id,'Album controls are below.',{remove_keyboard:true});
+    pref.activeAlbum=e.id;pref.albumControlsInline=true;rememberAlbumCancelLabel(this,id);
     return albumMain(this,id,e);
   }
   albumApp(id,e){

@@ -11,14 +11,14 @@ function fixture(){
 }
 test('album main menu uses the approved four readable rows and moves management into More',async()=>{
   const f=fixture();await f.cb(1,'v');
-  assert.deepEqual(f.last().reply_markup.keyboard.map(row=>row.map(b=>b.text)),[['📂 Open album app'],['📥 Get all (0)','🆕 Get new (0)'],['➕ Add media','🔗 Share'],['🔔 Follow:ON','⋯ More','🔄 Refresh']]);
+  assert.deepEqual(f.last().reply_markup.inline_keyboard.map(row=>row.map(b=>b.text)),[['📂 Open album app'],['📥 Get all (0)','🆕 Get new (0)'],['➕ Add media','🔗 Share'],['🔔 Follow:ON','⋯ More','🔄 Refresh']]);
   assert.ok(f.buttons().every(button=>button.text.length<24));
   await f.cb(1,'album-more');assert.ok(f.buttons().some(b=>b.callback_data===`album-danger:${f.e.id}`));assert.ok(f.buttons().some(b=>b.text==='🏠 Main menu'));
   await f.cb(2,'album-more');assert.ok(f.buttons().some(b=>b.text==='🚪 Leave album'));assert.ok(!f.buttons().some(b=>b.text==='⚠️ Danger zone'));
 });
 
-test('Album App uses text reply command then authenticated inline launch, preserving album context and input',async()=>{
- const f=fixture();await f.cb(2,'v');assert.deepEqual(f.last().reply_markup.keyboard[0][0],{text:'📂 Open album app'});assert.ok(f.last().reply_markup.keyboard.flat().every(button=>!button.web_app));const received=structuredClone(f.data.preferences[2].mediaDelivery);f.data.sessions[2]={step:'phone',event:f.e.id,fictionalInput:'keep'};
+test('Album App launches directly inline; legacy text command still preserves album context and input',async()=>{
+ const f=fixture();await f.cb(2,'v');assert.equal(f.last().reply_markup.inline_keyboard[0][0].web_app.url,'https://example.test/app?gallery='+f.e.id);const received=structuredClone(f.data.preferences[2].mediaDelivery);f.data.sessions[2]={step:'phone',event:f.e.id,fictionalInput:'keep'};
  await f.bot.handle({message:{chat:{id:2,type:'private'},from:{id:2},text:'📂 Open album app'}});assert.equal(f.last().reply_markup.inline_keyboard[0][0].web_app.url,'https://example.test/app?gallery='+f.e.id);assert.equal(f.last().reply_markup.keyboard,undefined);assert.deepEqual(f.data.sessions[2],{step:'phone',event:f.e.id,fictionalInput:'keep'});assert.deepEqual(f.data.preferences[2].mediaDelivery,received);assert.ok(f.calls.every(call=>call.method!=='sendMediaGroup' && call.method!=='sendPhoto'));
 });
 
@@ -26,6 +26,28 @@ test('stale-keyboard recovery deep link rechecks current album permission and ne
  const f=fixture();await f.bot.handle({message:{chat:{id:2,type:'private'},from:{id:2},text:'/start albumapp_'+f.e.id}});assert.equal(f.last().reply_markup.inline_keyboard[0][0].web_app.url,'https://example.test/app?gallery='+f.e.id);
  const before=structuredClone(f.data);for(const id of [4,2]){if(id===2)f.e.viewToken='f'.repeat(32);await f.bot.handle({message:{chat:{id,type:'private'},from:{id},text:'/start albumapp_'+f.e.id}});assert.match(f.last().text,/unavailable/);assert.equal(f.last().reply_markup,undefined);assert.ok(!f.last().text.includes(f.e.title));}assert.equal(f.data.preferences[4],undefined);assert.deepEqual(f.data.preferences[2].mediaAccess,before.preferences[2].mediaAccess);assert.ok(f.calls.every(call=>call.method==='sendMessage'));
  f.bot.appUrl='';await f.cb(1,'album-app');assert.match(f.last().text,/not configured/);assert.ok(f.calls.every(call=>call.method==='sendMessage' || call.method==='answerCallbackQuery'));
+});
+
+test('restored inline album controls retain album-scoped Refresh and clear a legacy keyboard only once',async()=>{
+ const f=fixture();f.data.preferences[2].activeAlbum=f.e.id;await f.cb(2,'album-open');
+ assert.equal(f.calls.filter(c=>c.reply_markup?.remove_keyboard).length,1);
+ assert.equal(f.last().reply_markup.keyboard,undefined);
+ assert.equal(f.buttons()[0].web_app.url,'https://example.test/app?gallery='+f.e.id);
+ assert.equal(f.buttons().find(b=>b.text==='🔄 Refresh').callback_data,'album-open:'+f.e.id);
+ const before=structuredClone(f.data.preferences[2].mediaDelivery);
+ await f.cb(2,'album-open');assert.equal(f.calls.filter(c=>c.reply_markup?.remove_keyboard).length,1);
+ assert.deepEqual(f.data.preferences[2].mediaDelivery,before);
+ assert.ok(f.calls.every(c=>!['sendPhoto','sendMediaGroup'].includes(c.method)));
+ f.e.viewToken='f'.repeat(32);await f.cb(2,'album-open');assert.match(f.last().text,/unavailable/);
+ assert.ok(!JSON.stringify(f.last()).includes(f.e.title));
+});
+
+test('opening inline album controls preserves a live single-button Cancel keyboard',async()=>{
+ const f=fixture();await f.cb(2,'album-open');const pref=f.data.preferences[2];delete pref.albumControlsInline;
+ const state=pref.mediaDelivery[f.e.id];state.jobs={fictional:{id:'fictional',items:{photo:{status:'queued',token:'fictional'}},notice:{}}};pref.mediaKeyboard={event:f.e.id,job:'fictional'};
+ f.calls.length=0;await f.cb(2,'album-open');assert.ok(!f.calls.some(c=>c.reply_markup?.remove_keyboard));
+ assert.ok(f.last().reply_markup.inline_keyboard);assert.equal(f.last().reply_markup.keyboard,undefined);
+ assert.equal(f.bot.idleKeyboard(2).keyboard.length,1);assert.match(f.bot.idleKeyboard(2).keyboard[0][0].text,/Cancel/);
 });
 test('Share defaults to contributor when permitted, persists OFF, and never changes existing album access or tokens',async()=>{
   const f=fixture(),before=JSON.stringify(f.e),links=photoLinks(f.e,'FictionalBot');
@@ -48,7 +70,7 @@ test('explicit upload restrictions and disabled sharing are preserved without si
 test('event media gains the album controls under the existing event ID while the event card remains separate',async()=>{
   const f=fixture();delete f.e.kind;f.e.guests={2:{name:'Guest',status:'yes'}};
   const before=JSON.stringify(f.e);
-  await f.cb(1,'m','0');assert.deepEqual(f.last().reply_markup.keyboard.slice(0,4).map(row=>row.map(b=>b.text)),[['📂 Open album app'],['📥 Get all (0)','🆕 Get new (0)'],['➕ Add media','🔗 Share'],['🔕 Follow:OFF','⋯ More','🔄 Refresh']]);
+  await f.cb(1,'m','0');assert.deepEqual(f.last().reply_markup.inline_keyboard.slice(0,4).map(row=>row.map(b=>b.text)),[['📂 Open album app'],['📥 Get all (0)','🆕 Get new (0)'],['➕ Add media','🔗 Share'],['🔕 Follow:OFF','⋯ More','🔄 Refresh']]);
   await f.cb(1,'album-share');assert.match(f.buttons()[0].text,/ON$/);assert.ok(f.buttons().find(b=>b.text==='Copy link').copy_text.text.includes('start=u_'));
   await f.cb(1,'album-share-set','off');assert.equal(f.buttons().find(b=>b.text==='Copy link').copy_text.text,`https://t.me/FictionalBot?startapp=gallery_${f.e.id}`);
   assert.equal(JSON.stringify(f.e),before);assert.equal(Object.keys(f.data.events).length,1);
