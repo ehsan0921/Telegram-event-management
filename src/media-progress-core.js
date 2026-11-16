@@ -32,7 +32,7 @@ function currentJob(bot,id){
   if(next){pref.mediaKeyboard={event:next.event,job:next.job.id,number:next.job.number};return next.job;}
   if(pref)delete pref.mediaKeyboard;return null;
 }
-function reconcile(state,job){
+export function reconcileProgress(state,job){
   for(const [mid,item] of Object.entries(job.items))if(active(item)){
     const result=state?.results?.[mid];let status=result?.token===item.token && ['sent','failed','cancelled'].includes(result.status)?result.status:null;
     if(state?.uncertain?.[mid]===item.token)status=state.uncertainReason?.[mid]==='partial'?'partial':'unconfirmed';
@@ -40,7 +40,7 @@ function reconcile(state,job){
   }
 }
 export function progressPayload(bot,id,eid,job,initial=false){
-  reconcile(stateFor(bot.db,id,eid),job);
+  reconcileProgress(stateFor(bot.db,id,eid),job);
   const e=bot.db.events[eid];if(!e || !bot.mediaAllowed(e,id) || !bot.mediaCan(e,id,'viewMedia'))return null;
   const s=progressStats(job),current=initial?job:currentJob(bot,id);
   if(current)rememberLabel(bot.db.preferences[id],current);
@@ -67,7 +67,7 @@ export function startProgress(bot,id,e,files){
 }
 export async function flushProgress(bot){
   for(const [uid,pref] of Object.entries(bot.db.preferences))for(const [eid,state] of Object.entries(pref.mediaDelivery || {}))for(const job of Object.values(state.jobs || {})){
-    reconcile(state,job);
+    reconcileProgress(state,job);
     if(!job.dirty || job.notice?.pending || job.notice?.disabled)continue;
     const payload=progressPayload(bot,Number(uid),eid,job,!job.notice?.keyboardConfirmed && !job.cancelRequested);if(!payload)continue;
     job.notice ||= {};job.notice.pending=true;job.dirty=false;
