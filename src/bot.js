@@ -6,7 +6,7 @@ import {albumMembers} from './album-members.js';
 import {changeAlbumAccess} from './album-access.js';
 import {leaveAlbum,removeInvitation} from './stuff.js';
 import {uploadedMedia,mediaMethods,mediaPayload} from './media-preview.js';
-import {mediaDeliveryState,queueMedia,queueMediaFiles,refreshMedia,cancelMedia,notifyMediaFollowers} from './media-delivery.js';
+import {mediaDeliveryState,queueMedia,queueMediaFiles,refreshMedia,cancelMedia,notifyMediaFollowers,resumeMediaForExplicitRequest} from './media-delivery.js';
 import {startBroadcast,toggleBroadcast,collectBroadcast,sendBroadcast,undoBroadcast} from './guest-messages.js';
 import {invitationMode,claimInvitation,invitationSettings,invitationParticipantMode,oneTimeInvites,invitationAvailable,consumeInvitation,reconcileInvitationClaims} from './invitations.js';
 import {isManager,cohostEntries,cohostIds,cohostGuard,cohostLink,createCohostInvite,revokeCohost,claimCohost} from './cohosts.js';
@@ -640,13 +640,14 @@ export class Bot {
     if(['album-open','album-share','album-share-set','album-more'].includes(action))return albumMenuCallback(this,id,e,action,arg);
     if(action==='media-get' || action==='media-follow' || action==='media-retry'){
       if(!e || e.cancelled || !this.mediaAllowed(e,id) || !this.mediaCan(e,id,'viewMedia'))return this.home(id,'This media link is unavailable.');
+      if(action==='media-get')resumeMediaForExplicitRequest(this,id);
       const state=mediaDeliveryState(this.db,id,e.id);
       if(action==='media-retry'){
         const unknown=Object.entries(state.uncertain || {}).filter(([mid,token])=>state.pending[mid]===token).map(([mid])=>mid);
         if(!unknown.length)return refreshMedia(this,id);
         if(arg!=='confirm')return this.send(id,`Delivery of ${unknown.length} files is unconfirmed. Check your chat first. Retrying may send copies of files that already arrived.`,keyboard([button('Retry unconfirmed files',`media-retry:${e.id}:confirm`),button('Keep waiting',`v:${e.id}`)]));
         for(const mid of unknown){delete state.pending[mid];delete state.uncertain[mid];if(state.uncertainReason)delete state.uncertainReason[mid];if(state.cancelled)delete state.cancelled[mid];}
-        const files=e.media.filter(file=>unknown.includes(file.id));const queued=await queueMediaFiles(this,id,e,files);if(this.durableMediaDelivery){startProgress(this,id,e,files);return;}await this.send(id,`${queued} files processed.`);return this.mediaCard(id,e);
+        this.resumeMedia?.(id);const files=e.media.filter(file=>unknown.includes(file.id));const queued=await queueMediaFiles(this,id,e,files);if(this.durableMediaDelivery){startProgress(this,id,e,files);return;}await this.send(id,`${queued} files processed.`);return this.mediaCard(id,e);
       }
       if(action==='media-follow'){
         if(!['on','off'].includes(arg))return this.mediaCard(id,e);

@@ -4,11 +4,14 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import {photoCollection} from '../src/permissions.js';
-import worker,{processUpdate,drainOutbox} from '../src/worker.js';
+import worker,{processUpdate,drainOutbox as workerDrain} from '../src/worker.js';
 import {mediaApi} from '../src/media-api.js';
 
+const mediaTimings=new WeakMap();
+const drainOutbox=env=>workerDrain(env,false,0,mediaTimings.get(env));
 function fixture(t){
-  const db=new DatabaseSync(':memory:');t.after(()=>db.close());
+  const realNow=Date.now.bind(Date);let clockNow=realNow();t.mock.method(Date,'now',()=>clockNow);
+  const db=new DatabaseSync(':memory:');db.function('unixepoch',()=>Math.floor(Date.now()/1000));t.after(()=>db.close());
   for(const file of ['0001_initial.sql','0002_delivery_lease.sql','0003_mini_app.sql'])db.exec(readFileSync(new URL('../migrations/'+file,import.meta.url),'utf8'));
   const album=photoCollection('Fictional memories',1);
   album.media=[{id:'111111111111',type:'photo',fileId:'fictional-photo',name:'Fictional uploader',by:1,caption:'Fictional sunset'}];
@@ -20,6 +23,7 @@ function fixture(t){
     if(failReceipt && statements.some(s=>s.args.some(value=>typeof value==='string' && value.includes('"received":["111111111111"]')))){failReceipt=false;throw Error('Fictional receipt failure');}
     db.exec('BEGIN');try{for(const s of statements)db.prepare(s.sql).run(...s.args);db.exec('COMMIT');}catch(error){db.exec('ROLLBACK');throw error;}
   }}};
+  mediaTimings.set(env,{now:()=>clockNow,wait:async ms=>{clockNow+=ms;await new Promise(resolve=>setTimeout(resolve,25));}});
   const sent=[];let rejectMedia=false;
   t.mock.method(globalThis,'fetch',async(url,options)=>{
     const params=JSON.parse(options.body),method=url.split('/').at(-1);sent.push({method,...params});
@@ -33,7 +37,7 @@ function fixture(t){
     save('sessions',3,{event:album.id,step:'upload',uploadToken:album.uploadToken});
     await processUpdate(env,{update_id:next++,message:{chat:{id:3,type:'private'},from:{id:3,first_name:'Fictional contributor'},photo:[{file_id:'fictional-new-photo'}]}});
   };
-  return {db,album,env,sent,save,read,cb,state,upload,failReceipt(){failReceipt=true;},rejectMedia(){rejectMedia=true;}};
+  return {db,album,env,sent,save,read,cb,state,upload,useRealTime(){t.mock.method(Date,'now',realNow);mediaTimings.delete(env);},retryNow(){clockNow+=61000;db.exec('UPDATE outbox SET due=0');},failReceipt(){failReceipt=true;},rejectMedia(){rejectMedia=true;}};
 }
 
 test('viewer and contributor menus share layout while viewers never receive contributor tokens or upload access',async t=>{
@@ -77,7 +81,7 @@ test('successful sends persist a receipt before state updates, so a receipt retr
   const f=fixture(t);await f.cb(2,'media-get','new');f.failReceipt();
   await assert.rejects(drainOutbox(f.env),/Fictional receipt failure/);
   assert.equal(f.sent.filter(row=>row.method==='sendPhoto').length,1);
-  f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);
+  f.retryNow();await drainOutbox(f.env);
   assert.deepEqual(f.state(2).received,['111111111111']);assert.equal(f.sent.filter(row=>row.method==='sendPhoto').length,1);
 });
 
@@ -111,7 +115,7 @@ test('429 keeps media pending and new until a successful retry',async t=>{
   await f.cb(2,'media-get','new');await drainOutbox(f.env);
   assert.deepEqual(f.state(2).received,[]);assert.equal(Object.keys(f.state(2).pending).length,1);
   assert.ok(f.db.prepare("SELECT due FROM outbox WHERE method='sendPhoto'").get().due>Math.floor(Date.now()/1000));
-  limited=false;f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);
+  limited=false;f.retryNow();await drainOutbox(f.env);
   assert.deepEqual(f.state(2).received,['111111111111']);assert.deepEqual(f.state(2).pending,{});
 });
 
@@ -175,7 +179,7 @@ test('rate-limited first album delays later albums for that recipient and preser
   await f.cb(2,'media-get','all');await drainOutbox(f.env);assert.equal(f.requests.length,1);
   await drainOutbox(f.env);assert.equal(f.requests.length,1);
   assert.equal(f.state(2).received.length,0);assert.equal(Object.keys(f.state(2).pending).length,21);
-  f.mode='success';f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);
+  f.mode='success';f.retryNow();await drainOutbox(f.env);
   assert.equal(f.state(2).received.length,21);
   assert.deepEqual(f.requests.slice(1).flatMap(r=>r.params.media?r.params.media.map(x=>x.media):[r.params.photo]),f.album.media.map(file=>file.fileId));
 });
@@ -201,7 +205,7 @@ test('known album rejection leaves each file new; successful receipt persistence
   const batch=f.env.DB.batch;let fail=true;
   f.env.DB.batch=async statements=>{if(fail && statements.some(s=>s.args.some(value=>typeof value==='string' && value.includes('"received":["')))){fail=false;throw Error('Fictional receipt commit failure');}return batch(statements);};
   await assert.rejects(drainOutbox(f.env),/receipt commit failure/);assert.equal(f.requests.length,2);
-  f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);assert.equal(f.requests.length,2);assert.equal(f.state(2).received.length,2);
+  f.retryNow();await drainOutbox(f.env);assert.equal(f.requests.length,2);assert.equal(f.state(2).received.length,2);
 });
 
 test('a crash after attempting an album is not replayed when its API receipt could not be persisted',async t=>{
@@ -211,7 +215,7 @@ test('a crash after attempting an album is not replayed when its API receipt cou
     const run=statement.run;statement.run=async()=>{if(fail && statement.args[0]?.includes('__mediaGroupDelivered')){fail=false;throw Error('Fictional receipt persistence interruption');}return run.call(statement);};
   }return statement;};
   await assert.rejects(drainOutbox(f.env),/receipt persistence interruption/);
-  f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);
+  f.retryNow();await drainOutbox(f.env);
   assert.equal(f.requests.length,1);assert.equal(f.state(2).received.length,0);assert.equal(Object.keys(f.state(2).uncertain).length,2);
 });
 
@@ -360,7 +364,7 @@ test('initial control 429 gates media until the keyboard is acknowledged',async 
   assert.equal(Object.values(f.state(2).jobs)[0].notice.keyboardConfirmed,undefined);
   // Avoid a real wait: test the media drain with the control deliberately still delayed.
   await drainOutbox(f.env);assert.equal(f.requests.length,0);
-  f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);
+  f.retryNow();await drainOutbox(f.env);
   assert.equal(f.requests.length,1);assert.equal(f.state(2).received.length,1);
 });
 
@@ -380,7 +384,7 @@ test('an ambiguous progress control never replays confirmed media receipts',asyn
   t.mock.method(globalThis,'fetch',async(url,options)=>url.endsWith('/sendMessage') && JSON.parse(options.body).reply_markup?.keyboard?Response.json({ok:false,error_code:503}):real(url,options));
   const j=Object.values(f.state(2).jobs)[0];const button=`📊 0/1 sent · 1 left · #${j.number}`;
   await processUpdate(f.env,{update_id:900003,message:{chat:{id:2,type:'private'},from:{id:2},text:button}});
-  await drainOutbox(f.env);f.db.exec('UPDATE outbox SET due=0');await drainOutbox(f.env);
+  await drainOutbox(f.env);f.retryNow();await drainOutbox(f.env);
   assert.equal(f.requests.length,1);assert.equal(f.state(2).received.length,1);
 });
 
@@ -419,4 +423,123 @@ test('a confirmation arriving after completion cannot cancel a later job',async 
  const f=batchFixture(t,['photo']);await f.cb(2,'media-get','all');const old=Object.values(f.state(2).jobs)[0].id;await drainOutbox(f.env);
  await f.cb(2,'media-get','all');await f.cb(2,'media-stop',old);
  assert.equal(Object.values(f.state(2).jobs).at(-1).cancelRequested,undefined);await drainOutbox(f.env);assert.equal(f.requests.length,2);
+});
+
+async function queueUsers(f,count){
+ for(let id=2;id<count+2;id++){if(id>3)f.save('preferences',id,{mediaAccess:{[f.album.id]:f.album.viewToken}});await f.cb(id,'media-get','all');}
+}
+test('real-clock mocked latency: six chats overlap fairly, with bounded API concurrency and start pacing',async t=>{
+ const f=batchFixture(t,Array(30).fill('photo'));f.useRealTime();await queueUsers(f,6);
+ const base=globalThis.fetch,starts=[],active=new Map();let peak=0,totalActive=0;
+ t.mock.method(globalThis,'fetch',async(url,options)=>{
+  const method=url.split('/').at(-1),params=JSON.parse(options.body);if(!['sendMediaGroup','sendPhoto'].includes(method))return base(url,options);
+  assert.equal(active.get(params.chat_id) || 0,0);active.set(params.chat_id,1);peak=Math.max(peak,++totalActive);starts.push({chat:params.chat_id,at:Date.now()});
+  try{await new Promise(resolve=>setTimeout(resolve,1500));return await base(url,options);}finally{totalActive--;active.set(params.chat_id,0);}
+ });
+ const started=performance.now();await Promise.all([drainOutbox(f.env),drainOutbox(f.env)]);const elapsed=performance.now()-started;
+ assert.ok(peak>=2 && peak<=3);assert.equal(f.requests.length,18);
+ console.log(JSON.stringify({syntheticStartOrder:starts.map(x=>x.chat)}));assert.equal(new Set(starts.slice(0,9).map(x=>x.chat)).size,6);
+ for(let i=1;i<starts.length;i++)assert.ok(starts[i].at-starts[i-1].at>=450);
+ for(let id=2;id<=7;id++){const calls=starts.filter(x=>x.chat===id);for(let i=1;i<calls.length;i++)assert.ok(calls[i].at-calls[i-1].at>=950);assert.equal(f.state(id).received.length,30);}
+ assert.ok(elapsed<18*1500*0.9);
+ console.log(JSON.stringify({syntheticConcurrency:{users:6,files:180,requests:18,peakApiConcurrency:peak,elapsedMs:Math.round(elapsed),serialNetworkLowerBoundMs:27000,network:'mocked 1500ms',productionMeasurement:false}}));
+});
+
+test('1200-file synthetic backlog remains fair across 429, partial, timeout and explicit resume',async t=>{
+ const f=batchFixture(t,Array(200).fill('photo'));await queueUsers(f,6);const base=globalThis.fetch,once=new Set(),attempts=[];let receipt=500000;
+ t.mock.method(globalThis,'fetch',async(url,options)=>{
+  const method=url.split('/').at(-1),params=JSON.parse(options.body);if(!['sendMediaGroup','sendPhoto'].includes(method))return base(url,options);
+  const chat=params.chat_id,files=(params.media || [{media:params.photo}]).map(x=>x.media);attempts.push({chat,files});
+  const first=!once.has(chat);once.add(chat);
+  if(first && chat===2)return Response.json({ok:false,error_code:429,parameters:{retry_after:7}});
+  if(first && chat===3)throw Error('Fictional lost connection after request');
+  const messages=files.map(()=>({message_id:++receipt,chat:{id:chat}}));
+  return Response.json({ok:true,result:first && chat===4?messages.slice(1):method==='sendMediaGroup'?messages:messages[0]});
+ });
+ for(let round=0;round<12;round++){await drainOutbox(f.env);f.retryNow();if([2,5,6,7].every(id=>f.state(id).received.length===200))break;}
+ for(const id of [2,5,6,7])assert.equal(f.state(id).received.length,200);
+ for(const id of [3,4]){assert.equal(f.state(id).received.length,0);assert.equal(Object.keys(f.state(id).uncertain).length,10);assert.equal(attempts.filter(x=>x.chat===id).length,1);await f.cb(id,'media-retry','confirm');}
+ for(let round=0;round<12;round++){await drainOutbox(f.env);f.retryNow();if([3,4].every(id=>f.state(id).received.length===200))break;}
+ for(let id=2;id<=7;id++){assert.equal(f.state(id).received.length,200);assert.equal(Object.keys(f.state(id).pending).length,0);}
+ for(const id of [5,6,7])assert.equal(new Set(attempts.filter(x=>x.chat===id).flatMap(x=>x.files)).size,200);
+ const observed=new Set(),counts=new Map();
+ // Under fault backoff, temporarily ineligible/claimed chats need not have a
+ // fixed position among API starts. No healthy 200-file backlog may finish
+ // before every chat has had its first actual attempt.
+ for(const attempt of attempts){observed.add(attempt.chat);counts.set(attempt.chat,(counts.get(attempt.chat) || 0)+1);if([5,6,7].includes(attempt.chat) && counts.get(attempt.chat)===20)assert.equal(observed.size,6);}
+ console.log(JSON.stringify({syntheticFailureStartOrder:attempts.slice(0,20).map(x=>x.chat)}));
+});
+
+test('restart preserves chat claims and turns an interrupted attempt into uncertain, without blocking other chats',async t=>{
+ const f=batchFixture(t,Array(11).fill('photo'));await queueUsers(f,2);
+ const row=f.db.prepare("SELECT id,params FROM outbox WHERE json_extract(params,'$.__mediaGroup[0].user')=2 ORDER BY rowid LIMIT 1").get(),saved=JSON.parse(row.params);saved.__mediaGroupAttempted=true;
+ f.db.prepare('UPDATE outbox SET params=? WHERE id=?').run(JSON.stringify(saved),row.id);
+ f.save('media_chat_lease',2,{owner:'fictional-crashed-holder',expires:Date.now()+60000});
+ await drainOutbox(f.env);assert.equal(f.state(2).received.length,0);assert.equal(f.state(3).received.length,11);assert.equal(f.requests.filter(r=>r.params.chat_id===2).length,0);
+ f.retryNow();await drainOutbox(f.env);
+ assert.equal(Object.keys(f.state(2).uncertain).length,10);assert.equal(f.requests.filter(r=>r.params.chat_id===2).length,0);
+ await f.cb(2,'media-retry','confirm');f.retryNow();await drainOutbox(f.env);assert.equal(f.state(2).received.length,11);
+});
+
+test('scoped media transactions preserve unrelated records and load only recipient state',async t=>{
+ const f=batchFixture(t,['photo','photo']);
+ for(let i=0;i<1000;i++)f.save('preferences','fictional-unrelated-'+i,{privateSetting:'fictional-'+i,received:['preserve']});
+ const before=f.db.prepare("SELECT id,data FROM records WHERE id LIKE 'fictional-unrelated-%' ORDER BY id").all();
+ let scoped=0,maxRows=0;const prepare=f.env.DB.prepare;
+ f.env.DB.prepare=sql=>{const q=prepare(sql);if(sql.includes("WHERE (kind IN ('preferences','sessions')")){const all=q.all;q.all=async()=>{const result=await all.call(q);scoped++;maxRows=Math.max(maxRows,result.results.length);return result;};}return q;};
+ await f.cb(2,'media-get','all');await drainOutbox(f.env);
+ assert.ok(scoped>0);assert.ok(maxRows<10);assert.deepEqual(f.db.prepare("SELECT id,data FROM records WHERE id LIKE 'fictional-unrelated-%' ORDER BY id").all(),before);assert.equal(f.state(2).received.length,2);
+});
+
+for(const phase of ['nextAt','emitAt'])test('Cancel during '+phase+' pacing stops the upcoming batch before any API request and preserves other chats',async t=>{
+ const f=batchFixture(t,Array(11).fill('photo'));await queueUsers(f,2);
+ f.save('media_budget','global',{[phase]:Date.now()+1000,until:0});
+ const timing=mediaTimings.get(f.env),wait=timing.wait;let cancelled=false;
+ timing.wait=async ms=>{await wait(ms);if(!cancelled){cancelled=true;await f.pressCancel(2);}};
+ await drainOutbox(f.env);
+ assert.equal(f.requests.filter(r=>r.params.chat_id===2).length,0);assert.equal(f.state(2).received.length,0);assert.equal(f.state(3).received.length,11);
+});
+
+test('chat FIFO spans different albums and legacy coalescing cannot jump an intervening album',async t=>{
+ const f=batchFixture(t,['photo','photo']),other=photoCollection('Fictional second album',1);other.media=[{...f.album.media[0],id:'eeeeeeeeeeee',fileId:'fictional-second'}];f.save('events',other.id,other);
+ const pref=f.read('preferences',2);pref.mediaAccess[other.id]=other.viewToken;f.save('preferences',2,pref);
+ await f.cb(2,'media-get','all');await processUpdate(f.env,{update_id:78100,callback_query:{id:'fictional-second',from:{id:2},data:'media-get:'+other.id+':all'}});
+ f.db.exec("DELETE FROM outbox WHERE method IN ('sendMediaGroup','sendPhoto')");
+ const states=f.read('preferences',2).mediaDelivery;
+ for(const [e,file] of [[f.album,f.album.media[0]],[other,other.media[0]],[f.album,f.album.media[1]]]){const tracking={user:2,event:e.id,media:file.id,token:states[e.id].pending[file.id],grant:e.viewToken};f.db.prepare('INSERT INTO outbox(id,method,params) VALUES (?, ?, ?)').run('fictional-order-'+file.id,'sendPhoto',JSON.stringify({chat_id:2,photo:file.fileId,__mediaDelivery:tracking}));}
+ await drainOutbox(f.env);assert.deepEqual(f.requests.map(r=>r.params.photo),['fictional-0','fictional-second','fictional-1']);
+});
+
+test('a late durable receipt resolves its uncertain hold without resending the recorded batch',async t=>{
+ const f=batchFixture(t,Array(11).fill('photo'));await f.cb(2,'media-get','all');
+ const row=f.db.prepare("SELECT id,params FROM outbox WHERE method='sendMediaGroup' LIMIT 1").get(),saved=JSON.parse(row.params),pref=f.read('preferences',2),state=pref.mediaDelivery[f.album.id];
+ state.uncertain=Object.fromEntries(saved.__mediaGroup.map(x=>[x.media,x.token]));f.save('preferences',2,pref);f.save('media_chat_state',2,{blocked:1});
+ saved.__mediaGroupDelivered=Array.from({length:10},(_,i)=>91000+i);f.db.prepare('UPDATE outbox SET params=? WHERE id=?').run(JSON.stringify(saved),row.id);
+ // A known durable receipt must be allowed to resolve a previously uncertain chat.
+ await drainOutbox(f.env);
+ assert.equal(f.requests.length,1);assert.equal(f.requests[0].params.photo,'fictional-10');assert.equal(f.state(2).received.length,11);assert.deepEqual(f.state(2).uncertain,{});
+});
+
+test('a held in-flight chat does not block another chat, and Cancel remains responsive',async t=>{
+ const f=batchFixture(t,Array(11).fill('photo'));await queueUsers(f,2);
+ let entered,release;const started=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve),base=globalThis.fetch;let held=false;
+ t.mock.method(globalThis,'fetch',async(url,options)=>{const params=JSON.parse(options.body);if(!held && url.endsWith('/sendMediaGroup') && params.chat_id===2){held=true;entered();await gate;}return base(url,options);});
+ const sending=drainOutbox(f.env);await started;
+ try{
+  for(let attempts=0;attempts<100 && f.state(3).received.length<11;attempts++)await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(f.state(3).received.length,11);assert.equal(f.state(2).received.length,0);
+  await f.pressCancel(2);
+ }finally{release();}
+ await sending;assert.equal(f.state(2).received.length,10);assert.equal(f.requests.filter(r=>r.params.chat_id===2).length,1);assert.equal(f.state(3).received.length,11);
+});
+
+test('Get new recovers a stale runtime hold while active uncertainty still requires explicit review',async t=>{
+ const f=batchFixture(t,['photo','photo']);f.save('media_chat_state',2,{blocked:1});await f.cb(2,'media-get','new');await drainOutbox(f.env);assert.equal(f.state(2).received.length,2);
+ f.mode='timeout';await f.cb(2,'media-get','all');await drainOutbox(f.env);assert.equal(f.read('media_chat_state',2).blocked,1);const calls=f.requests.length;
+ f.mode='success';await f.cb(2,'media-get','new');await drainOutbox(f.env);assert.equal(f.requests.length,calls);assert.equal(f.read('media_chat_state',2).blocked,1);
+ const other=photoCollection('Fictional authorized album',1);other.media=[{...f.album.media[0],id:'eeeeeeeeeeee',fileId:'fictional-authorized'}];f.save('events',other.id,other);
+ const pref=f.read('preferences',2);pref.mediaAccess={[other.id]:other.viewToken};f.save('preferences',2,pref);
+ const response=await mediaApi(new Request('https://fictional.test/api/events/'+other.id+'/media/eeeeeeeeeeee/send',{method:'POST'}),f.env,{id:2});assert.equal(response.status,200);await drainOutbox(f.env);
+ assert.equal(f.requests.length,calls+1);assert.equal(f.requests.at(-1).params.photo,'fictional-authorized');assert.equal(Object.keys(f.state(2).uncertain).length,2);
+
 });

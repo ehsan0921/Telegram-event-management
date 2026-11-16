@@ -4,7 +4,7 @@ import {mediaCan,mediaRole,photoLinks,showsUploaders,shareUploadLink} from './pe
 import { mutateState } from './worker-store.js';
 import {isManager} from './cohosts.js';
 import {invitationAvailable} from './invitations.js';
-import {queueMedia,deliveryStatus} from './media-delivery.js';
+import {queueMedia,deliveryStatus,resumeMediaForExplicitRequest} from './media-delivery.js';
 
 
 export async function mediaApi(request, env, user) {
@@ -51,6 +51,7 @@ export async function mediaApi(request, env, user) {
       const file = current.media.find(item => item.id === f.id); if (!file) throw new Error('File removed');
       let state=bot.db.preferences[user.id]?.mediaDelivery?.[current.id];
       if(state?.uncertain?.[file.id] && state.pending[file.id]===state.uncertain[file.id])return {queued:false,alreadyQueued:true,request:state.pending[file.id],status:deliveryStatus(state,file.id,state.pending[file.id])};
+      resumeMediaForExplicitRequest(bot,user.id);
       const started=await queueMedia(bot,user.id,current,file);
       state=bot.db.preferences[user.id]?.mediaDelivery?.[current.id];
       const reference=state?.pending?.[file.id] || state?.results?.[file.id]?.token;

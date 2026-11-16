@@ -303,3 +303,9 @@ test('snapshot clears delivery keyboard IDs and pending coordination but preserv
   const db=restore(prepareSnapshot(options({sourceSql})).sql);
   try{assert.deepEqual(JSON.parse(db.prepare("SELECT data FROM records WHERE kind='preferences'").get().data),{mediaDelivery:{example:{follow:true,received:['fictional']}}});assert.equal(db.prepare("SELECT count(*) AS n FROM records WHERE kind='media_ui_lease'").get().n,0);}finally{db.close();}
 });
+
+test('snapshot clears media chat claims, rate appointments and uncertain holds without removing business receipts',()=>{
+ const sourceSql=source("INSERT INTO records VALUES('media_chat_lease','fixture','{\"owner\":\"fictional\",\"expires\":99}'); INSERT INTO records VALUES('media_chat_state','fixture','{\"blocked\":1}'); INSERT INTO records VALUES('media_budget','global','{\"until\":99}'); INSERT INTO records VALUES('preferences','fixture','{\"mediaDelivery\":{\"fictional\":{\"follow\":true,\"received\":[\"fictional-file\"]}}}');");
+ const db=restore(prepareSnapshot(options({sourceSql})).sql);
+ try{assert.equal(db.prepare("SELECT count(*) AS n FROM records WHERE kind IN ('media_chat_lease','media_chat_state','media_budget')").get().n,0);assert.deepEqual(JSON.parse(db.prepare("SELECT data FROM records WHERE kind='preferences'").get().data).mediaDelivery.fictional.received,['fictional-file']);}finally{db.close();}
+});

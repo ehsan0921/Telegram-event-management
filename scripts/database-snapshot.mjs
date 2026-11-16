@@ -176,7 +176,7 @@ export function prepareSnapshot({ sourceSql, developmentSchema, developmentSetti
     // Cleanup must not run production audit/business triggers in the private staging DB.
     for (const trigger of objects.filter(row => row.type === 'trigger')) db.exec(`DROP TRIGGER ${identifier(trigger.name)}`);
     const removedSessions = Number(rows(db, "SELECT count(*) AS n FROM records WHERE kind='sessions'")[0].n);
-    db.exec("DELETE FROM records WHERE kind IN ('sessions','upload_pending','upload_finish','media_ui_lease')");
+    db.exec("DELETE FROM records WHERE kind IN ('sessions','upload_pending','upload_finish','media_ui_lease','media_chat_lease','media_chat_state','media_budget')");
     // Telegram message IDs and undo state belong to the sending bot only.
     db.exec("UPDATE records SET data=json_remove(data,'$.broadcasts') WHERE kind='preferences' AND json_type(data,'$.broadcasts') IS NOT NULL");
     // Delivery control message IDs, leases and queue tokens belong to the source bot.

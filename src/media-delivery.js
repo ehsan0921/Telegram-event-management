@@ -117,3 +117,18 @@ export function deliveryStatus(state,media,request){
   const result=state?.results?.[media];
   return result?.token===request && ['sent','failed','cancelled'].includes(result.status)?result.status:'unconfirmed';
 }
+
+export function clearResolvedMediaHold(data,user,persist){
+  if(!Object.values(data.preferences[user]?.mediaDelivery || {}).some(state=>Object.keys(state.uncertain || {}).length))persist("UPDATE records SET data=json_set(data,'$.blocked',0) WHERE kind='media_chat_state' AND id=?",String(user));
+}
+
+export function resumeMediaForExplicitRequest(bot,id){
+  const states=bot.db.preferences[id]?.mediaDelivery || {};
+  const review=Object.entries(states).some(([eid,state])=>{
+    const e=bot.db.events[eid];
+    return e && !e.cancelled && bot.mediaAllowed(e,id) && bot.mediaCan(e,id,'viewMedia') && Object.entries(state.uncertain || {}).some(([mid,token])=>state.pending?.[mid]===token);
+  });
+  // Do not erase inaccessible uncertainty or retry it. A fresh authorized
+  // request may continue other media without a stale runtime-only hold.
+  if(!review)bot.resumeMedia?.(id);
+}

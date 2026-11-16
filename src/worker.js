@@ -1,3 +1,4 @@
+import {drainMediaRound,nextMediaTime,mediaBackoff} from './media-scheduler.js';
 import {drainProgress} from './media-progress.js';
 import { mutateState, BusyError } from './worker-store.js';
 import {telegramPayload} from './telegram-upload.js';
@@ -85,28 +86,32 @@ export function unavailablePhotoFallback(params, result) {
     ...(disable_notification !== undefined ? { disable_notification } : {}), ...(protect_content !== undefined ? { protect_content } : {}) };
 }
 
-export async function drainOutbox(env, immediate=false, attempt=0) {
+export async function drainOutbox(env, immediate=false, attempt=0, timing) {
+  const now=timing?.now || (()=>Date.now()),wait=timing?.wait || (ms=>new Promise(resolve=>setTimeout(resolve,ms)));
   await drainProgress(env,undefined,telegram);
   const owner = crypto.randomUUID();
   const lock = await env.DB.prepare('INSERT INTO delivery_lease(id,owner,expires) VALUES (1,?,unixepoch()+60) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,expires=excluded.expires WHERE delivery_lease.expires<unixepoch() RETURNING owner').bind(owner).first();
   if (!lock) {
-    if(attempt<(immediate?25:5)){await new Promise(resolve=>setTimeout(resolve,200));return drainOutbox(env,immediate,attempt+1);}
+    if(attempt<(immediate?25:5)){await new Promise(resolve=>setTimeout(resolve,200));return drainOutbox(env,immediate,attempt+1,timing);}
     return;
   }
-  const deadline = Date.now() + 20000;
+  const deadline = now() + 24000;
   try {
   deliveryLoop: do {
+  const renewed=await env.DB.prepare('UPDATE delivery_lease SET expires=unixepoch()+60 WHERE owner=? AND expires>unixepoch() RETURNING owner').bind(owner).first();if(!renewed)break;
+  const mediaWorked=await drainMediaRound(env,owner,telegram,id=>drainProgress(env,id,telegram),{...timing,budgetMs:Math.max(0,Math.min(8000,deadline-now()))});
   const priority="CASE WHEN json_type(params,'$.__uploadNotice') IS NOT NULL THEN 0 ELSE 1 END";
-  const query=immediate ? `SELECT id,due FROM outbox WHERE due<=unixepoch() AND json_type(params,'$.__mediaProgress') IS NULL ORDER BY ${priority},CASE WHEN json_type(params,'$.__broadcastDelete') IS NOT NULL THEN 0 WHEN json_type(params,'$.__broadcastNotice') IS NOT NULL THEN 1 WHEN json_type(params,'$.__broadcast') IS NOT NULL THEN 2 ELSE 3 END,rowid LIMIT 20` : `SELECT id,due FROM outbox WHERE due<=unixepoch() AND json_type(params,'$.__mediaProgress') IS NULL ORDER BY ${priority},rowid LIMIT 20`;
+  const query=immediate ? `SELECT id,due FROM outbox WHERE due<=unixepoch() AND json_type(params,'$.__mediaProgress') IS NULL AND json_type(params,'$.__mediaGroup') IS NULL AND json_type(params,'$.__mediaDelivery') IS NULL ORDER BY ${priority},CASE WHEN json_type(params,'$.__broadcastDelete') IS NOT NULL THEN 0 WHEN json_type(params,'$.__broadcastNotice') IS NOT NULL THEN 1 WHEN json_type(params,'$.__broadcast') IS NOT NULL THEN 2 ELSE 3 END,rowid LIMIT 20` : `SELECT id,due FROM outbox WHERE due<=unixepoch() AND json_type(params,'$.__mediaProgress') IS NULL AND json_type(params,'$.__mediaGroup') IS NULL AND json_type(params,'$.__mediaDelivery') IS NULL ORDER BY ${priority},rowid LIMIT 20`;
   const { results } = await env.DB.prepare(query).all();
   if(!results.length){
     await drainProgress(env,undefined,telegram);
     const soon=await env.DB.prepare("SELECT min(due) AS due FROM outbox WHERE json_type(params,'$.__mediaProgress') IS NOT NULL").first();
-    if(soon?.due && soon.due<=Math.floor(Date.now()/1000)+2 && Date.now()+300<deadline){await new Promise(resolve=>setTimeout(resolve,200));continue;}
+    const mediaAt=await nextMediaTime(env),due=Math.min(soon?.due?soon.due*1000:Infinity,mediaAt || Infinity);
+    if((mediaWorked || due<=now()+2000) && now()+300<deadline){await wait(200);continue;}
     break;
   }
   for (const { id, due } of results) {
-    if (Date.now() > deadline || due > Math.floor(Date.now() / 1000)) break deliveryLoop;
+    if (now() > deadline || due > Math.floor(Date.now() / 1000)) break deliveryLoop;
     const row = await env.DB.prepare('UPDATE outbox SET due=unixepoch()+60, attempts=attempts+1 WHERE id=? AND due<=unixepoch() RETURNING *').bind(id).first();
     if (!row) continue;
     const {__mediaDelivery:mediaTracking,__mediaDelivered:mediaDelivered,__broadcast:tracking,__broadcastDelete:deletion,__broadcastNotice,__broadcastDelivered:delivered,...deliveryParams}=JSON.parse(row.params);
@@ -168,6 +173,7 @@ export async function drainOutbox(env, immediate=false, attempt=0) {
       await env.DB.prepare('DELETE FROM outbox WHERE id=?').bind(id).run();
       if (!result.ok) console.log(JSON.stringify({ event: 'delivery_rejected', method: row.method, code: result.error_code }));
     } else {
+      if(result.error_code===429 && deliveryParams.chat_id)await mediaBackoff(env,deliveryParams.chat_id,result.parameters?.retry_after);
       const seconds = Math.max(5, Math.min(result.parameters?.retry_after || 2 ** Math.min(row.attempts, 10), 3600));
       await env.DB.prepare('UPDATE outbox SET due=unixepoch()+? WHERE id=?').bind(seconds, id).run();
       break deliveryLoop;
@@ -178,12 +184,12 @@ export async function drainOutbox(env, immediate=false, attempt=0) {
       // so retrying receipt persistence cannot send the content twice.
       if(error instanceof BusyError){
         await env.DB.prepare('UPDATE outbox SET due=unixepoch() WHERE id=?').bind(id).run();
-        if(Date.now()<deadline){await new Promise(resolve=>setTimeout(resolve,100));continue deliveryLoop;}
+        if(now()<deadline){await new Promise(resolve=>setTimeout(resolve,100));continue deliveryLoop;}
       }
       throw error;
     }
   }
-  } while(Date.now()<deadline);
+  } while(now()<deadline);
   } finally { await env.DB.prepare('DELETE FROM delivery_lease WHERE owner=?').bind(owner).run(); }
 }
 
