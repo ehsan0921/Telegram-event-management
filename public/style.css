@@ -136,3 +136,8 @@ body.dark .guest-roster-row[data-status=yes]{background:#203c2e}body.dark .guest
 .media-preview-status p{margin:0}.media-preview-status button{color:var(--text);background:var(--panel);border:1px solid var(--line)}
 @keyframes media-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.media-spinner{animation:none}}
+
+/* Per-photo reactions: an accessible heart toggle and a noninteractive count. */
+button.media-like-heart{background:transparent;color:var(--accent);border:0;box-shadow:none;padding:4px 8px;min-width:44px;min-height:44px;font-size:25px;line-height:1;}
+button.media-like-heart:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.media-like-count{align-self:center;color:var(--muted);font-size:12px;white-space:nowrap;}

@@ -65,7 +65,7 @@ try{
   const api=async(id,path,input)=>{const response=await worker.dispatchFetch('https://fictional.test/api/'+path,{method:input===undefined?'GET':'POST',headers:{Authorization:signed(id),'Content-Type':'application/json'},...(input===undefined?{}:{body:JSON.stringify(input)})});return response;};
   pref.mediaAccess={[album.id]:album.viewToken};await save('preferences',2,pref);
   const liked=await api(2,'events/'+album.id+'/media/'+firstFile.id+'/likes',{liked:true});assert.equal(liked.status,200);assert.equal((await liked.json()).count,1);
-  const names=await api(2,'events/'+album.id+'/media/'+firstFile.id+'/likes');assert.equal((await names.json()).likers[0].name,'Fictional viewer');
+  const counts=await api(2,'events/'+album.id+'/media/'+firstFile.id+'/likes');assert.deepEqual(await counts.json(),{count:1,liked:true});
   const created=await api(2,'collections',{title:'Fictional private collection',personal:true,requestId:randomUUID()});assert.equal(created.status,200);const personal=(await created.json()).event;assert.equal(personal.sharingDisabled,true);
   const input={sourceEvent:album.id,mediaIds:[firstFile.id],requestId:randomUUID()};assert.equal((await api(2,'albums/'+personal.id+'/references',input)).status,403);
   assert.equal((await api(1,'albums/'+album.id+'/reshare',{allowed:true,confirm:true,version:0})).status,200);

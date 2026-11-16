@@ -66,11 +66,11 @@ test('linking is idempotent; removal and an old add retry cannot restore a remov
  assert.equal((await f.api(2,'albums/'+f.dest.id+'/references',{sourceEvent:f.source.id,mediaIds:['222222222222'],requestId})).status,409);
 });
 
-test('likes use verified identity, are idempotent under concurrency, and lists expose names only to current photo viewers',async t=>{
+test('likes use verified identity, are idempotent under concurrency, and responses expose only counts and own state to current photo viewers',async t=>{
  const f=fixture(t),path='events/'+f.source.id+'/media/111111111111/likes';
  const responses=await Promise.all([f.api(2,path,{liked:true,userId:7}),f.api(3,path,{liked:true})]);assert.ok(responses.every(r=>r.status===200));
  assert.equal((await f.value(2,path,{liked:true})).count,2);assert.equal((await f.value(3,path,{liked:false})).count,1);
- const listed=await f.value(3,path);assert.deepEqual(listed.likers,[{name:'Fictional 2'}]);assert.equal(listed.liked,false);assert.equal(listed.next,null);
+ const listed=await f.value(3,path);assert.deepEqual(listed,{count:1,liked:false});
  const denied=await f.api(4,path);assert.equal(denied.status,403);assert.ok(!(await denied.text()).includes('Fictional 2'));
  assert.equal((await f.api(2,path+'?offset=-1')).status,400);assert.equal((await f.api(2,path,{liked:'true'})).status,400);
  const unauth=await miniApi(new Request('https://fictional.test/api/'+path),f.env);assert.equal(unauth.status,401);
@@ -170,10 +170,10 @@ test('source uploader privacy is retained when a destination exposes uploader na
  const gallery=await f.value(3,'events/'+f.dest.id+'/gallery');assert.equal(gallery.media[0].name,null);assert.ok(!JSON.stringify(gallery).includes('Fictional uploader'));
 });
 
-test('liker pagination preserves count and reveals no Telegram IDs',async t=>{
+test('legacy liker-list requests return count only and never names, identities or pagination',async t=>{
  const f=fixture(t),users={};for(let id=100;id<161;id++){users[id]='2026-01-01';f.save('users',id,{id,firstName:'Fictional liker '+id});}
  f.save('media_likes',f.source.id+':111111111111',{users});const path='events/'+f.source.id+'/media/111111111111/likes';
- const first=await f.value(2,path),second=await f.value(2,path+'?offset='+first.next);assert.equal(first.count,61);assert.equal(first.likers.length,50);assert.equal(second.likers.length,11);assert.equal(second.next,null);assert.ok(first.likers.every(u=>Object.keys(u).join()==='name'));
+ for(const suffix of ['', '?offset=0','?offset=50']){const result=await f.value(2,path+suffix);assert.deepEqual(result,{count:61,liked:false});assert.ok(!JSON.stringify(result).includes('Fictional liker'));}assert.equal(Object.keys(f.read('media_likes',f.source.id+':111111111111').users).length,61);
 });
 
 test('named event invitation withdrawal blocks future linked access without changing RSVP records',async t=>{

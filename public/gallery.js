@@ -36,54 +36,46 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
     if(!file.canLike)return;
     const key=id+'/'+file.id;let state=reactionStates.get(key);
     if(!state){state={liked:!!file.liked,count:file.likeCount || 0,busy:false,buttons:[],lists:[]};reactionStates.set(key,state);}
-    const like=action('',async()=>{
+    const like=element('button','','media-like-heart');like.type='button';like.onclick=async()=>{
       if(state.busy)return;state.busy=true;paint();const current=generation;
       try{const result=await api(`events/${id}/media/${file.id}/likes`,{liked:!state.liked});if(current!==generation)return;state.liked=result.liked;state.count=result.count;}
       catch(error){if(current===generation)notice(error.message);}
       finally{state.busy=false;if(current===generation)paint();}
-    });
-    const list=action('',()=>showLikers(id,file));state.buttons.push(like);state.lists.push(list);parent.append(like,list);
-    function paint(){for(const button of state.buttons){button.textContent=state.liked?'♥ Unlike':'♡ Like';button.disabled=state.busy;button.setAttribute('aria-pressed',String(state.liked));}for(const button of state.lists)button.textContent=`${state.count} ${state.count===1?'like':'likes'}`;}
+    };
+    const list=element('span','','media-like-count');state.buttons.push(like);state.lists.push(list);parent.append(like,list);
+    function paint(){for(const button of state.buttons){button.textContent=state.liked?'\u2665':'\u2661';button.disabled=state.busy;button.setAttribute('aria-label',state.liked?'Unlike photo':'Like photo');button.setAttribute('aria-pressed',String(state.liked));}for(const count of state.lists){count.textContent=`${state.count} ${state.count===1?'like':'likes'}`;count.setAttribute('aria-live','polite');}}
     paint();
-  }
-  async function showLikers(id,file){
-    const {dialog,content,status}=socialDialog('Photo likes'),more=action('More',()=>load(next),'secondary');let next=0,busy=false;
-    content.append(element('p','Your like and name are visible to people who can currently view this photo.','small muted'),more);
-    async function load(offset){
-      if(busy)return;busy=true;more.disabled=true;status.textContent='Loading likes.';
-      try{const result=await api(`events/${id}/media/${file.id}/likes?offset=${offset}`);if(!dialog.isConnected)return;
-        if(offset===0){for(const child of [...content.children])if(child!==more)child.remove();content.prepend(element('p','Likes are visible only to current photo viewers.','small muted'));}
-        for(const person of result.likers)content.insertBefore(element('p',person.name),more);
-        status.textContent=`${result.count} ${result.count===1?'like':'likes'}.`;next=result.next;more.hidden=next===null;
-      }catch(error){if(dialog.isConnected){content.replaceChildren();status.textContent=error.message;}}
-      finally{busy=false;more.disabled=false;}
-    }
-    await load(0);
   }
   async function choosePersonalAlbum(sourceId,file=null){
     const {dialog,content,status,close}=socialDialog(file?'Add to personal album':'New personal album'),current=generation;
     content.append(element('p',file?'This creates a link, not a copy. Source permission and current source access are still required for every viewer.':'Your personal album starts private. Use album sharing controls when you are ready.','small muted'));
     const select=element('select'),selectLabel=element('label','Your album'),title=element('input'),titleLabel=element('label','New personal album name');title.maxLength=100;title.type='text';titleLabel.append(title);selectLabel.append(select);
-    const create=action('Create private album',createAlbum),add=action('Add selected media',addMedia);let busy=false,createRequest=null,addRequest=null,addedTarget=null;
+    const photo=file?.type==='photo';
+    const create=action(file?(photo?'Create album & add photo':'Create album & add item'):'Create private album',createAlbum),add=action(photo?'Add photo':'Add selected media',addMedia);let busy=false,createRequest=null,addRequest=null,addedTarget=null;
+    create.onclick=createAlbum;add.onclick=addMedia;
     if(file)content.append(selectLabel);content.append(titleLabel,create);if(file)content.append(add);
     dialog.oncancel=event=>{if(busy)event.preventDefault();};
     function lock(value){busy=value;for(const control of [select,title,create,add,close])control.disabled=value;add.disabled=value || !select.children.length || addedTarget===select.value;}select.onchange=()=>lock(false);
-    function option(album){const entry=element('option',album.title+(album.private?' (private)':''));entry.value=album.id;select.append(entry);}
+    function option(album){if([...select.children].some(entry=>entry.value===album.id))return;const entry=element('option',album.title+(album.private?' (private)':''));entry.value=album.id;select.append(entry);}
     async function load(){if(!file)return;lock(true);status.textContent='Loading your albums.';try{const result=await api('albums/owned');if(!dialog.isConnected)return;select.replaceChildren();for(const album of result.albums.filter(album=>album.id!==sourceId))option(album);status.textContent=select.children.length?'Choose an album, or create a private one.':'Create a private album first.';}catch(error){status.textContent=error.message;}finally{lock(false);add.disabled=!select.children.length;}}
     async function createAlbum(){
       if(busy)return;const name=title.value.trim();if(!name){status.textContent='Enter an album name.';return;}
       if(!createRequest || createRequest.title!==name)createRequest={title:name,id:crypto.randomUUID()};lock(true);status.textContent='Creating private album.';
-      try{const result=await api('collections',{title:name,personal:true,requestId:createRequest.id});if(!dialog.isConnected || current!==generation)return;await refreshAlbums?.();
-        if(file){option({id:result.event.id,title:result.event.title,private:true});select.value=result.event.id;status.textContent='Private album created. Choose Add selected media to link this item.';}
-        else{dialog.close();await openGallery(result.event.id);}
-      }catch(error){if(dialog.isConnected)status.textContent=error.message;}
-      finally{lock(false);if(file)add.disabled=!select.children.length;}
+      let created=false;try{const result=await api('collections',{title:name,personal:true,requestId:createRequest.id});if(!dialog.isConnected || current!==generation)return;
+        if(file){created=true;option({id:result.event.id,title:result.event.title,private:true});select.value=result.event.id;await linkToAlbum(result.event.id);}
+        else{await refreshAlbums?.();dialog.close();await openGallery(result.event.id);}
+      }catch(error){if(dialog.isConnected)status.textContent=created?'Private album created. Adding this item was not confirmed: '+error.message+' Use Add photo to retry the same request.':error.message;}
+      finally{lock(false);}
+    }
+    async function linkToAlbum(target){
+      if(!addRequest || addRequest.target!==target)addRequest={target,id:crypto.randomUUID()};status.textContent=photo?'Adding this photo.':'Adding linked media.';
+      const result=await api(`albums/${target}/references`,{sourceEvent:sourceId,mediaIds:[file.id],requestId:addRequest.id});if(!dialog.isConnected || current!==generation)return;
+      status.textContent=result.added?(photo?'Photo added to your album. The original is unchanged.':'Linked to your album. The original is unchanged.'):result.ids?.length?'This item was already linked. Source permissions still apply.':'This earlier request was already handled; removed items stay removed.';addedTarget=target;try{await refreshAlbums?.();}catch{notice('Album list could not refresh. The item result above is unchanged.');}
     }
     async function addMedia(){
-      if(busy || !select.value)return;if(!addRequest || addRequest.target!==select.value)addRequest={target:select.value,id:crypto.randomUUID()};lock(true);status.textContent='Adding linked media.';
-      try{const result=await api(`albums/${select.value}/references`,{sourceEvent:sourceId,mediaIds:[file.id],requestId:addRequest.id});if(!dialog.isConnected || current!==generation)return;
-        status.textContent=result.added?'Linked to your album. The original is unchanged.':result.ids?.length?'This item was already linked. Source permissions still apply.':'This earlier request was already handled; removed items stay removed.';addedTarget=select.value;await refreshAlbums?.();add.disabled=true;
-      }catch(error){if(dialog.isConnected)status.textContent=error.message;}
+      if(busy || !select.value || addedTarget===select.value)return;lock(true);
+      try{await linkToAlbum(select.value);}
+      catch(error){if(dialog.isConnected)status.textContent=error.message;}
       finally{lock(false);}
     }
     await load();
@@ -167,7 +159,6 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
       const gallery=await api(`events/${id}/gallery`);if(current!==generation)return;
       renderAlbumDetails?.(id,$('gallery-settings'));
       if(gallery.socialFeatures){const tools=element('div','','event-actions');tools.append(action('＋ New personal album',()=>choosePersonalAlbum(id)));$('gallery-settings').prepend(tools);$('gallery-settings').hidden=false;
-      $('gallery-settings').append(element('p','Liking a photo makes your name visible to people who can currently view it.','small muted'));
       if(gallery.linkedAccessNote)$('gallery-settings').append(element('p',gallery.linkedAccessNote,'small muted'));
       if(gallery.isOwner)mediaManagement(id,$('gallery-settings'),current);}
       $('gallery-title').textContent=gallery.title;$('gallery-summary').textContent=`${gallery.media.length} shared files. Send a file to your Telegram chat.`;
@@ -195,7 +186,7 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
         const buttons=element('div','','event-actions');
         const sendButton=iconAction('✈','Send to Telegram',async()=>{const current=generation,update=status=>{if(current===generation)notice(sendStatusText(status));};try{const result=await sendFile(id,file,update);update(result.status);}catch(error){if(current===generation)notice(error.message+' Delivery is not confirmed; check your chat before trying again.');}});
         buttons.append(sendButton);reactions(id,file,buttons);
-        if(gallery.socialFeatures){const addToAlbum=iconAction('＋','Add to personal album',()=>choosePersonalAlbum(id,file));addToAlbum.disabled=file.canLink!==true;addToAlbum.title=file.reference?'Open the original source album to link this item.':'The source owner must allow linking; current source access is still required.';buttons.append(addToAlbum);}
+        if(gallery.socialFeatures){const addToAlbum=iconAction('+','Add to personal album',()=>choosePersonalAlbum(id,file));addToAlbum.setAttribute('aria-label',kind==='photo'?'Add this photo to a personal album':'Add this item to a personal album');addToAlbum.disabled=file.canLink!==true;addToAlbum.title=file.reference?'Open the original source album to link this item.':'The source owner must allow linking; current source access is still required.';buttons.append(addToAlbum);}
         if(gallery.canRemove)buttons.append(action('Remove from album',()=>removeAlbumMedia(id,file,gallery.mediaVersion).catch(error=>notice(error.message)),'secondary'));
         if(kind==='video')buttons.append(iconAction('▶','Play video',async()=>{const pending=++popupGeneration;try{const blob=await mediaBlob(id,file.id);if(current!==generation || pending!==popupGeneration)return;const url=URL.createObjectURL(blob);urls.add(url);showMedia(id,previewFile,blob,url);}catch(error){if(current===generation && pending===popupGeneration)notice(error.message);}}));
         body.append(buttons);card.append(body);list.append(card);

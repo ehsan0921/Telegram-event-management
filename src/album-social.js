@@ -60,9 +60,7 @@ export async function albumSocialApi(request,env,user){
    if(!file || mediaPreview(file)!=='photo')fail('This photo is unavailable.',403);
    if(request.method==='GET'){
     const offset=Number(url.searchParams.get('offset') || 0);if(!Number.isSafeInteger(offset) || offset<0 || offset>100000)fail('Invalid page.');
-    const state=await readLikes(env,likeKey(file),id),uids=Object.keys(state.users).sort((a,b)=>String(state.users[a]).localeCompare(String(state.users[b])) || a.localeCompare(b)).slice(offset,offset+50);
-    const names=await env.DB.prepare("SELECT id,data FROM records WHERE kind='users' AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(uids)).all(),map=new Map(names.results.map(row=>{const u=JSON.parse(row.data);return [row.id,[u.firstName,u.lastName].filter(Boolean).join(' ') || 'Telegram user'];}));
-    return response({count:state.count,liked:state.liked,likers:uids.map(uid=>({name:map.get(uid) || 'Telegram user'})),next:offset+uids.length<state.count?offset+uids.length:null});
+    const state=await readLikes(env,likeKey(file),id);return response({count:state.count,liked:state.liked});
    }
    if(request.method!=='POST')return response({error:'Not found.'},404);
    const input=await parse(request);if(typeof input.liked!=='boolean')fail('Choose Like or Unlike.');
