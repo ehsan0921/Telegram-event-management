@@ -1,3 +1,5 @@
+import {readMediaGraph,resolveMedia,visibleMedia,mayLinkMedia} from './media-reference.js';
+import {galleryLikes,likeIdentity} from './album-social.js';
 import qrcode from 'qrcode-generator';
 import {mediaPreview,previewMime} from './media-preview.js';
 import {mediaCan,mediaRole,photoLinks,showsUploaders,shareUploadLink} from './permissions.js';
@@ -35,8 +37,17 @@ export async function mediaApi(request, env, user) {
     const qr=qrcode(0,'M');qr.addData(galleryUrl);qr.make();
     return json({link:galleryUrl,image:qr.createDataURL(6,24)});
   }
-  if (match[2] === 'gallery' && request.method === 'GET') return json({ id: e.id, title: e.title, galleryUrl, qrEnabled:e.qrEnabled!==false, cancelled: !!e.cancelled, canUpload: !e.cancelled && mediaCan(e, user.id, 'uploadMedia',pref), uploadUrl: `https://t.me/${env.BOT_USERNAME}?start=a_${e.id}`, media: (e.media || []).map(f => ({ id: f.id, type: f.type, previewKind:mediaPreview(f),hasThumbnail:!!f.thumbnail,filename: f.filename, caption: f.caption, name: showsUploaders(e)?f.name:null, at: f.at, size: f.size || null })) });
-  const f = e.media?.find(item => item.id === match[3]);
+  const graph=await readMediaGraph(env,e,user.id,pref);
+  if (match[2] === 'gallery' && request.method === 'GET'){
+    const files=visibleMedia(graph,e,user.id),likes=await galleryLikes(env,files,user.id),shown=new Set(files.map(file=>file.id));
+    return json({socialFeatures:env.ALBUM_SOCIAL_ENABLED!=='false',id:e.id,title:e.title,galleryUrl,qrEnabled:e.qrEnabled!==false,cancelled:!!e.cancelled,isOwner:e.owner===user.id,canRemove:env.ALBUM_SOCIAL_ENABLED!=='false' && e.owner===user.id && e.kind==='photos',mediaVersion:e.mediaEditVersion || 0,canUpload:!e.cancelled && mediaCan(e,user.id,'uploadMedia',pref),uploadUrl:`https://t.me/${env.BOT_USERNAME}?start=a_${e.id}`,
+      linkedAccessNote:(e.media || []).some(file=>file.reference)?'Linked media remains subject to the source album. Viewers also need current source access.':null,
+      unavailable:e.owner===user.id?(e.media || []).filter(file=>file.reference && !shown.has(file.id)).map(file=>({id:file.id})):[],
+      media:files.map(file=>({id:file.id,type:file.type,previewKind:mediaPreview(file),hasThumbnail:!!file.thumbnail,filename:file.filename,caption:file.caption,name:showsUploaders(e)?file.name:null,at:file.at,size:file.size || null,reference:!!file.reference,canLink:mayLinkMedia(graph,e,e.media.find(item=>item.id===file.id),user.id),canLike:env.ALBUM_SOCIAL_ENABLED!=='false' && mediaPreview(file)==='photo',...(likes.get(likeIdentity(file)) || {likeCount:0,liked:false})}))});
+  }
+  const rawFile=e.media?.find(item=>item.id===match[3]);
+  const f=resolveMedia(graph,e,rawFile,user.id);
+  if(rawFile && !f)return json({error:'This media is unavailable. Source access or linking permission changed.'},403);
   if (!f) return json({ error: 'This file is no longer in the event.' }, 404);
   if(match[4]==='delivery-status' && request.method==='GET'){
     const reference=url.searchParams.get('request');
@@ -47,8 +58,8 @@ export async function mediaApi(request, env, user) {
     if(e.cancelled)return json({error:'This event is no longer available for media delivery.'},409);
     const queued=await mutateState(env, async (data, bot) => {
       const current = data.events[e.id];
-      if (!bot.mediaAllowed(current, user.id) || !bot.mediaCan(current, user.id, 'viewMedia')) throw new Error('Access changed');
-      const file = current.media.find(item => item.id === f.id); if (!file) throw new Error('File removed');
+      if (!bot.mediaAllowed(current, user.id) || !bot.mediaCan(current, user.id, 'viewMedia')) return {denied:true};
+      const file=resolveMedia(data,current,current.media.find(item=>item.id===f.id),user.id);if(!file)return {denied:true};
       let state=bot.db.preferences[user.id]?.mediaDelivery?.[current.id];
       if(state?.uncertain?.[file.id] && state.pending[file.id]===state.uncertain[file.id])return {queued:false,alreadyQueued:true,request:state.pending[file.id],status:deliveryStatus(state,file.id,state.pending[file.id])};
       resumeMediaForExplicitRequest(bot,user.id);
@@ -57,6 +68,7 @@ export async function mediaApi(request, env, user) {
       const reference=state?.pending?.[file.id] || state?.results?.[file.id]?.token;
       return {queued:true,alreadyQueued:!started,request:reference,status:deliveryStatus(state,file.id,reference)};
     });
+    if(queued.denied)return json({error:'Media access changed. Refresh the album.'},403);
     return json(queued);
   }
   if (request.method !== 'GET' || (match[4] && match[4]!=='thumbnail')) return json({ error: 'Not found.' }, 404);

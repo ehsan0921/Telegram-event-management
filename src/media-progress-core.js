@@ -65,8 +65,8 @@ export function startProgress(bot,id,e,files){
   const done=Object.values(state.jobs).filter(item=>item.id!==job.id && !Object.values(item.items).some(active));
   for(const old of done.slice(0,Math.max(0,done.length-20)))delete state.jobs[old.id];return job;
 }
-export async function flushProgress(bot){
-  for(const [uid,pref] of Object.entries(bot.db.preferences))for(const [eid,state] of Object.entries(pref.mediaDelivery || {}))for(const job of Object.values(state.jobs || {})){
+export async function flushProgress(bot,users=null){
+  for(const [uid,pref] of Object.entries(bot.db.preferences).filter(([uid])=>!users || users.has(uid)))for(const [eid,state] of Object.entries(pref.mediaDelivery || {}))for(const job of Object.values(state.jobs || {})){
     reconcile(state,job);
     if(!job.dirty || job.notice?.pending || job.notice?.disabled)continue;
     const payload=progressPayload(bot,Number(uid),eid,job,!job.notice?.keyboardConfirmed && !job.cancelRequested);if(!payload)continue;

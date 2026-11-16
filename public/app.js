@@ -200,7 +200,7 @@ function setupPhotoCreation(){
     event.preventDefault();const button=$('photo-create');if(button.disabled)return;
     button.disabled=true;$('photo-error').hidden=true;
     try{
-      const result=await api('collections',{title:$('photo-title').value,showUploaders:$('photo-show-uploaders').checked,requestId:photoRequestId});
+      const result=await api('collections',{title:$('photo-title').value,showUploaders:$('photo-show-uploaders').checked,personal:$('photo-personal').checked,requestId:photoRequestId});
       const links=$('photo-links');links.replaceChildren(element('h3',result.event.title),action('Open collection',()=>openGallery(result.event.id)));appendPhotoLinks(links,result.event);links.hidden=false;
       await refresh();photoRequestId=crypto.randomUUID();
     }catch(error){$('photo-error').textContent=error.message;$('photo-error').hidden=false;}
@@ -359,7 +359,7 @@ function renderAlbumDetails(id,node){
   if(event.kind==='photos')appendPhotoLinks(node,event);
   else node.append(element('p','Manage this gallery from its event in My stuff.','small muted'));
 }
-const {openGallery,showQr,dismissPendingMedia}=setupGallery({$,api,element,action,go,notice,openTelegram,initData,renderAlbumDetails});
+const {openGallery,showQr,dismissPendingMedia}=setupGallery({$,api,element,action,go,notice,openTelegram,initData,renderAlbumDetails,confirmMediaAction:confirmAction,refreshAlbums:refresh});
 const {cancelEvent,deleteEvent}=setupEventActions({$,api,refresh,notice,onEnded:event=>{
   state.events=state.events.filter(item=>item.id!==event.id);
   if(activeEvent?.id===event.id){activeEvent=null;formReady=false;$('event-form').hidden=true;$('success').hidden=true;}

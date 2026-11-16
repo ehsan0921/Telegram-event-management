@@ -1,10 +1,11 @@
 import {isManager} from './cohosts.js';
 import {invitationAvailable} from './invitations.js';
-import {responsesClosed,mediaRole} from './permissions.js';
+import {responsesClosed,mediaRole,mediaRevoked} from './permissions.js';
 import {eventGroup} from './reminders.js';
 import {InputError} from './time.js';
 
 export function visibleStuff(event,id,preference={}){
+  if(event.kind==='photos' && mediaRevoked(event,id))return false;
   if(event.kind==='photos' && event.sharingDisabled)return event.owner===id;
   if(isManager(event,id))return true;
   if(event.kind==='photos')return !!mediaRole(event,id,preference);

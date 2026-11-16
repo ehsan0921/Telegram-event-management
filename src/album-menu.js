@@ -1,3 +1,4 @@
+import {visibleMedia} from './media-reference.js';
 import {photoLinks,showsUploaders,uploadLink} from './permissions.js';
 import {mediaDeliveryState} from './media-delivery.js';
 import {isManager} from './cohosts.js';
@@ -7,9 +8,10 @@ const linksFor=(bot,e)=>e.kind==='photos'?photoLinks(e,bot.username):e.cancelled
 const canShareUploads=(bot,id,e)=>!!linksFor(bot,e)?.contributor && bot.mediaCan(e,id,'uploadMedia');
 export function albumMain(bot,id,e){
   const state=mediaDeliveryState(bot.db,id,e.id),received=new Set(state.received);
+  const available=visibleMedia(bot.db,e,id);
   const rows=[
     [bot.appUrl?bot.miniButton('📂 Open album app',`?gallery=${e.id}`):button('📂 Open album app',`m:${e.id}:0`)],
-    [button(`📥 Get all (${e.media.length})`,`media-get:${e.id}:all`),button(`🆕 Get new (${e.media.filter(file=>!received.has(file.id)).length})`,`media-get:${e.id}:new`)],
+    [button(`📥 Get all (${available.length})`,`media-get:${e.id}:all`),button(`🆕 Get new (${available.filter(file=>!received.has(file.id)).length})`,`media-get:${e.id}:new`)],
     [button('➕ Add media',`media-add:${e.id}`),button('🔗 Share',`album-share:${e.id}`)],
     [button(`${state.follow?'🔔':'🔕'} Follow:${state.follow?'ON':'OFF'}`,`media-follow:${e.id}:${state.follow?'off':'on'}`),button('⋯ More',`album-more:${e.id}`)]
   ];

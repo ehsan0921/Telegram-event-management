@@ -1,3 +1,4 @@
+import {visibleMedia} from './media-reference.js';
 import {startProgress,parseProgressText,progressTextAction} from './media-progress-core.js';
 import {albumMain,albumMenuCallback} from './album-menu.js';
 import {paymentMethod,paidEvent} from './event-payment.js';
@@ -19,7 +20,7 @@ import { issueTicket } from './tickets.js';
 import { randomBytes } from 'node:crypto';
 import { invoice, checkout, successful, orderFor, requestRefund, refundResult } from './payments.js';
 import { eventTime, InputError } from './time.js';
-import { photoCollection,photoLinks,showsUploaders,mediaRole,mediaCan,uploadLink, shareUploadLink,asksPhone,asksComments,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
+import { photoCollection,photoLinks,showsUploaders,mediaRevoked,mediaRole,mediaCan,uploadLink, shareUploadLink,asksPhone,asksComments,requiresApproval,asksParticipantCount,hidesLocation } from './permissions.js';
 import { upcoming, eventGroup, setReminder, reminderOptions, reminderLabel, applyDefaultReminder } from './reminders.js';
 import { permissions, permissionLabels, can, guests, confirmed, canSeeLocation, responsesClosed, responseCounts, participantCount } from './permissions.js';
 
@@ -122,7 +123,7 @@ export class Bot {
     return 'Last updated: ' + formatted;
   }
   allowed(e, id) { return e && (isManager(e,id) || !!e.guests[id] && invitationAvailable(e,id)); }
-  mediaAllowed(e, id) { return e && (e.kind==='photos' ? !!mediaRole(e,id,this.db.preferences[id]) : this.allowed(e, id) || !!mediaRole(e,id,this.db.preferences[id])); }
+  mediaAllowed(e, id) { return e && !mediaRevoked(e,id) && (e.kind==='photos' ? !!mediaRole(e,id,this.db.preferences[id]) : this.allowed(e, id) || !!mediaRole(e,id,this.db.preferences[id])); }
   mediaCan(e,id,key) { return mediaCan(e,id,key,this.db.preferences[id]); }
   async mediaCard(id,e){
     if(!e || e.cancelled || !this.mediaAllowed(e,id) || !this.mediaCan(e,id,'viewMedia'))return this.home(id,'This media link is unavailable.');
@@ -416,7 +417,7 @@ export class Bot {
       const photoMatch=text.match(/^\/start(?:@\w+)? p_([a-f0-9]{32})$/);
       if(photoMatch){
         const e=Object.values(this.db.events).find(e=>e.kind==='photos' && !e.cancelled && !e.sharingDisabled && e.viewToken===photoMatch[1]);
-        if(!e)return this.home(id,'This photo-sharing link is unavailable.');
+        if(!e || mediaRevoked(e,id))return this.home(id,'This photo-sharing link is unavailable.');
         this.db.preferences[id] ||= {};this.db.preferences[id].mediaAccess ||= {};
         if(!this.mediaCan(e,id,'uploadMedia'))this.db.preferences[id].mediaAccess[e.id]=photoMatch[1];
         return this.mediaCard(id,e);
@@ -424,7 +425,7 @@ export class Bot {
       const uploadMatch = text.match(/^\/start(?:@\w+)? (u_([a-f0-9]{32})|a_([a-f0-9]{16}))$/);
       if (uploadMatch) {
         const e = uploadMatch[2] ? Object.values(this.db.events).find(e => e.uploadToken === uploadMatch[2] && uploadLink(e, this.username)) : this.db.events[uploadMatch[3]];
-        if (!e || e.cancelled || (!uploadMatch[2] && (!this.mediaAllowed(e, id) || !this.mediaCan(e, id, 'uploadMedia')))) return this.home(id, 'This upload link is unavailable.');
+        if (!e || e.cancelled || mediaRevoked(e,id) || (!uploadMatch[2] && (!this.mediaAllowed(e, id) || !this.mediaCan(e, id, 'uploadMedia')))) return this.home(id, 'This upload link is unavailable.');
         if (uploadMatch[2]) { this.db.preferences[id] ||= {}; this.db.preferences[id].mediaAccess ||= {}; this.db.preferences[id].mediaAccess[e.id] = uploadMatch[2]; }
         this.session(id, { step: 'media', event: e.id });
         return this.mediaCard(id,e);
@@ -647,7 +648,7 @@ export class Bot {
         if(!unknown.length)return refreshMedia(this,id);
         if(arg!=='confirm')return this.send(id,`Delivery of ${unknown.length} files is unconfirmed. Check your chat first. Retrying may send copies of files that already arrived.`,keyboard([button('Retry unconfirmed files',`media-retry:${e.id}:confirm`),button('Keep waiting',`v:${e.id}`)]));
         for(const mid of unknown){delete state.pending[mid];delete state.uncertain[mid];if(state.uncertainReason)delete state.uncertainReason[mid];if(state.cancelled)delete state.cancelled[mid];}
-        this.resumeMedia?.(id);const files=e.media.filter(file=>unknown.includes(file.id));const queued=await queueMediaFiles(this,id,e,files);if(this.durableMediaDelivery){startProgress(this,id,e,files);return;}await this.send(id,`${queued} files processed.`);return this.mediaCard(id,e);
+        this.resumeMedia?.(id);const files=visibleMedia(this.db,e,id).filter(file=>unknown.includes(file.id));const queued=await queueMediaFiles(this,id,e,files);if(this.durableMediaDelivery){startProgress(this,id,e,files);return;}await this.send(id,`${queued} files processed.`);return this.mediaCard(id,e);
       }
       if(action==='media-follow'){
         if(!['on','off'].includes(arg))return this.mediaCard(id,e);
@@ -655,7 +656,7 @@ export class Bot {
         await this.send(id,state.follow?'Following this album. New media will be sent to your Telegram chat.':'Follow is off. New media will no longer be sent automatically.');
       }else{
         if(!['all','new'].includes(arg))return this.mediaCard(id,e);
-        const received=new Set(state.received),files=e.media.filter(file=>arg==='all' || !received.has(file.id));
+        const received=new Set(state.received),files=visibleMedia(this.db,e,id).filter(file=>arg==='all' || !received.has(file.id));
         const queued=await queueMediaFiles(this,id,e,files);if(this.durableMediaDelivery){startProgress(this,id,e,files);return;}await this.send(id,`${queued} files processed.`);return this.mediaCard(id,e);
       }
       return this.mediaCard(id,e);
@@ -898,16 +899,16 @@ export class Bot {
       const page = Number(arg);
       if (!Number.isSafeInteger(page) || page < 0) return;
       if (page === 0 && this.appUrl && e.media.filter(f => f.type === 'photo').length > 10) await this.send(id, 'There are more than 10 images. The event gallery is an easier way to browse and download them.', keyboard([this.miniButton('🖼 Open event gallery', `?gallery=${eid}`)], [button('Continue in chat', `m:${eid}:1`)]));
-      const media = e.media.slice(page * 5, page * 5 + 5);
+      const accessible=visibleMedia(this.db,e,id),media = accessible.slice(page * 5, page * 5 + 5);
       if (!media.length) return this.send(id, 'No shared media on this page yet.', keyboard(...(can(e, id, 'uploadMedia') ? [[button('📎 Add media', `u:${eid}`)]] : []), [button('Back to event', `v:${eid}`)]));
       for (const f of media) {
-        const caption=[showsUploaders(e)?`Shared by ${f.name}`:'Shared media',f.caption].filter(Boolean).join('\n');
+        const caption=[showsUploaders(e) && f.name?`Shared by ${f.name}`:'Shared media',f.caption].filter(Boolean).join('\n');
         if(['sticker','video_note'].includes(f.type))await this.send(id,caption);
         await this.api(mediaMethods[f.type], { ...mediaPayload(f,id,caption), ...(isManager(e,id) ? { reply_markup: keyboard([button('Remove from event', `remove:${eid}:${f.id}`)]) } : {}) });
       }
       const nav = [];
       if (page > 0) nav.push(button('← Previous', `m:${eid}:${page - 1}`));
-      if ((page + 1) * 5 < e.media.length) nav.push(button('Next →', `m:${eid}:${page + 1}`));
+      if ((page + 1) * 5 < accessible.length) nav.push(button('Next →', `m:${eid}:${page + 1}`));
       return this.send(id, `Media page ${page + 1}`, keyboard(...(nav.length ? [nav] : []), [button('Back to event', `v:${eid}`)]));
     }
     if (action === 'remove') { const count=e.media.length;e.media = e.media.filter(f => f.id !== arg);if(e.media.length!==count)e.mediaUpdatedAt=new Date().toISOString();return this.send(id, 'Removed from the event collection. Previously sent copies remain in Telegram chats.'); }

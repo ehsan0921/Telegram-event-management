@@ -309,3 +309,8 @@ test('snapshot clears media chat claims, rate appointments and uncertain holds w
  const db=restore(prepareSnapshot(options({sourceSql})).sql);
  try{assert.equal(db.prepare("SELECT count(*) AS n FROM records WHERE kind IN ('media_chat_lease','media_chat_state','media_budget')").get().n,0);assert.deepEqual(JSON.parse(db.prepare("SELECT data FROM records WHERE kind='preferences'").get().data).mediaDelivery.fictional.received,['fictional-file']);}finally{db.close();}
 });
+
+test('snapshot preserves canonical photo likes and import idempotency tombstones as business records',()=>{
+ const sourceSql=source(`INSERT INTO records VALUES('media_likes','fictional:photo','{"users":{"2":"2026-01-01"}}');INSERT INTO records VALUES('media_import','2:fictional-request','{"signature":"fictional","ids":[]}');`);
+ const prepared=prepareSnapshot(options({sourceSql})),db=restore(prepared.sql);try{assert.equal(db.prepare("SELECT count(*) AS n FROM records WHERE kind IN ('media_likes','media_import')").get().n,2);}finally{db.close();}
+});

@@ -1,4 +1,4 @@
-import {createHmac} from 'node:crypto';
+import {createHmac,randomUUID} from 'node:crypto';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 import {readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
@@ -60,5 +60,21 @@ try{
   assert.equal((await (await worker.dispatchFetch(statusUrl,{headers})).json()).status,'sent');
   const pref=await read('preferences',2);pref.mediaAccess={};await save('preferences',2,pref);
   assert.equal((await worker.dispatchFetch(statusUrl,{headers})).status,403);
+
+  const signed=id=>{const q=new URLSearchParams({auth_date:String(Math.floor(Date.now()/1000)),user:JSON.stringify({id,first_name:'Fictional viewer'})});const text=[...q].sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>k+'='+v).join('\n');q.set('hash',createHmac('sha256',authKey).update(text).digest('hex'));return 'tma '+q;};
+  const api=async(id,path,input)=>{const response=await worker.dispatchFetch('https://fictional.test/api/'+path,{method:input===undefined?'GET':'POST',headers:{Authorization:signed(id),'Content-Type':'application/json'},...(input===undefined?{}:{body:JSON.stringify(input)})});return response;};
+  pref.mediaAccess={[album.id]:album.viewToken};await save('preferences',2,pref);
+  const liked=await api(2,'events/'+album.id+'/media/'+firstFile.id+'/likes',{liked:true});assert.equal(liked.status,200);assert.equal((await liked.json()).count,1);
+  const names=await api(2,'events/'+album.id+'/media/'+firstFile.id+'/likes');assert.equal((await names.json()).likers[0].name,'Fictional viewer');
+  const created=await api(2,'collections',{title:'Fictional private collection',personal:true,requestId:randomUUID()});assert.equal(created.status,200);const personal=(await created.json()).event;assert.equal(personal.sharingDisabled,true);
+  const input={sourceEvent:album.id,mediaIds:[firstFile.id],requestId:randomUUID()};assert.equal((await api(2,'albums/'+personal.id+'/references',input)).status,403);
+  assert.equal((await api(1,'albums/'+album.id+'/reshare',{allowed:true,confirm:true,version:0})).status,200);
+  const imported=await api(2,'albums/'+personal.id+'/references',input);assert.equal(imported.status,200);const linked=(await imported.json()).ids[0];
+  const gallery=await api(2,'events/'+personal.id+'/gallery');assert.equal((await gallery.json()).media[0].liked,true);
+  assert.equal((await api(3,'events/'+personal.id+'/gallery')).status,403);
+  assert.equal((await api(1,'albums/'+album.id+'/members',{userId:2,blocked:true,confirm:true,version:0})).status,200);
+  assert.equal((await api(2,'events/'+personal.id+'/media/'+linked+'/likes')).status,403);
+  assert.equal((await api(2,'events/'+personal.id+'/media/'+linked+'/send',{})).status,403);
+  console.log('Worker personal albums, canonical photo likes, consent and source revocation passed. D1 local; Telegram mocked.');
   console.log('Worker upload completion, shared menus, pending deduplication, delivery receipts and Follow on/off passed. D1 local; Telegram mocked.');
 }finally{await worker.dispose();}

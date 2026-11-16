@@ -1,3 +1,4 @@
+import {resolveMedia,referenceKey} from './media-reference.js';
 import {markProgress,ownedProgress} from './media-progress-core.js';
 import {randomBytes} from 'node:crypto';
 import {mediaMethods,mediaPayload} from './media-preview.js';
@@ -16,7 +17,7 @@ export function mediaDeliveryAllowed(bot,tracking){
   const e=bot.db.events[tracking.event],state=bot.db.preferences[tracking.user]?.mediaDelivery?.[tracking.event];
   return !!(e && !e.cancelled && bot.mediaAllowed(e,tracking.user) && bot.mediaCan(e,tracking.user,'viewMedia') &&
     state?.cancelled?.[tracking.media]!==tracking.token && state?.pending?.[tracking.media]===tracking.token && (!tracking.follow || state.follow && state.followToken===tracking.follow) &&
-    tracking.grant===(bot.db.preferences[tracking.user]?.mediaAccess?.[e.id] || `owner:${e.owner}`) && e.media.some(file=>file.id===tracking.media));
+    tracking.grant===(bot.db.preferences[tracking.user]?.mediaAccess?.[e.id] || `owner:${e.owner}`) && e.media.some(file=>file.id===tracking.media && referenceKey(file)===(tracking.referenceKey || null) && !!resolveMedia(bot.db,e,file,tracking.user)));
 }
 export function mediaDeliveryResult(data,tracking,success){
   const state=data.preferences[tracking.user]?.mediaDelivery?.[tracking.event];
@@ -31,8 +32,8 @@ export function mediaDeliveryResult(data,tracking,success){
 }
 export function mediaDeliveryPayload(bot,tracking){
   if(!mediaDeliveryAllowed(bot,tracking))return null;
-  const e=bot.db.events[tracking.event],file=e.media.find(item=>item.id===tracking.media);
-  const caption=[tracking.follow?`New media · ${e.title}`:e.title,showsUploaders(e)?`Shared by ${file.name}`:'Shared media',file.caption].filter(Boolean).join('\n').slice(0,1024);
+  const e=bot.db.events[tracking.event],file=resolveMedia(bot.db,e,e.media.find(item=>item.id===tracking.media),tracking.user);
+  const caption=[tracking.follow?`New media · ${e.title}`:e.title,showsUploaders(e) && file.name?`Shared by ${file.name}`:'Shared media',file.caption].filter(Boolean).join('\n').slice(0,1024);
   return mediaPayload(file,tracking.user,caption);
 }
 export async function queueMedia(bot,id,e,file,{follow=false}={}){
@@ -40,7 +41,7 @@ export async function queueMedia(bot,id,e,file,{follow=false}={}){
   const state=mediaDeliveryState(bot.db,id,e.id);
   if(state.pending[file.id])return false;
   if(!Object.keys(state.pending).length)state.deliveryGeneration=(state.deliveryGeneration || 0)+1;
-  const tracking={event:e.id,media:file.id,user:id,token:randomBytes(8).toString('hex'),grant:bot.db.preferences[id]?.mediaAccess?.[e.id] || `owner:${e.owner}`,...(follow?{follow:state.followToken}:{})};
+  const tracking={event:e.id,media:file.id,user:id,token:randomBytes(8).toString('hex'),referenceKey:referenceKey(file),grant:bot.db.preferences[id]?.mediaAccess?.[e.id] || `owner:${e.owner}`,...(follow?{follow:state.followToken}:{})};
   state.pending[file.id]=tracking.token;state.results ||= {};state.results[file.id]={token:tracking.token,status:'queued'};
   try{
     await bot.api(mediaMethods[file.type],{...mediaDeliveryPayload(bot,tracking),__mediaDelivery:tracking});
@@ -66,9 +67,9 @@ export async function queueMediaFiles(bot,id,e,files){
     if(!group.length)return;
     const selected=group;group=[];
     if(selected.length===1 || !bot.durableMediaDelivery){for(const file of selected)if(await queueMedia(bot,id,e,file))count++;return;}
-    const state=mediaDeliveryState(bot.db,id,e.id),items=selected.map(file=>({event:e.id,media:file.id,user:id,token:randomBytes(8).toString('hex'),grant:bot.db.preferences[id]?.mediaAccess?.[e.id] || `owner:${e.owner}`}));
+    const state=mediaDeliveryState(bot.db,id,e.id),items=selected.map(file=>({event:e.id,media:file.id,user:id,token:randomBytes(8).toString('hex'),referenceKey:referenceKey(file),grant:bot.db.preferences[id]?.mediaAccess?.[e.id] || `owner:${e.owner}`}));
     for(const item of items)state.pending[item.media]=item.token;
-    const media=items.map(item=>{const file=e.media.find(file=>file.id===item.media),payload=mediaDeliveryPayload(bot,item);return {type:file.type,media:file.fileId,...(payload.caption?{caption:payload.caption}:{})};});
+    const media=items.map(item=>{const payload=mediaDeliveryPayload(bot,item),type=Object.keys(mediaMethods).find(key=>payload?.[key]);return {type,media:payload[type],...(payload.caption?{caption:payload.caption}:{})};});
     try{await bot.api('sendMediaGroup',{chat_id:id,media,__mediaGroup:items});count+=items.length;}
     catch(error){for(const item of items)mediaDeliveryResult(bot.db,item,false);throw error;}
   }
