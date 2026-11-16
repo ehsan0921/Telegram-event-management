@@ -72,9 +72,16 @@ try{
   const imported=await api(2,'albums/'+personal.id+'/references',input);assert.equal(imported.status,200);const linked=(await imported.json()).ids[0];
   const gallery=await api(2,'events/'+personal.id+'/gallery');assert.equal((await gallery.json()).media[0].liked,true);
   assert.equal((await api(3,'events/'+personal.id+'/gallery')).status,403);
+  const copied=await api(2,'albums/'+personal.id+'/copies',{sourceEvent:album.id,mediaId:firstFile.id,requestId:crypto.randomUUID()});assert.equal(copied.status,200);const savedPhoto=(await copied.json()).ids[0];
+  assert.equal((await api(2,'collections/'+personal.id+'/access',{action:'regenerate',confirm:true,version:0})).status,200);
+  const shared=await read('events',personal.id);await message(4,'/start p_'+shared.viewToken);await settle();
+  const viewerGallery=await api(4,'events/'+personal.id+'/gallery');const visible=(await viewerGallery.json()).media;assert.equal(visible.length,1);assert.equal(visible[0].id,savedPhoto);assert.equal(visible[0].savedCopy,true);
   assert.equal((await api(1,'albums/'+album.id+'/members',{userId:2,blocked:true,confirm:true,version:0})).status,200);
   assert.equal((await api(2,'events/'+personal.id+'/media/'+linked+'/likes')).status,403);
   assert.equal((await api(2,'events/'+personal.id+'/media/'+linked+'/send',{})).status,403);
+  assert.deepEqual(await(await api(4,'events/'+personal.id+'/media/'+savedPhoto+'/likes')).json(),{count:0,liked:false});
+  assert.equal((await api(4,'events/'+personal.id+'/media/'+savedPhoto+'/send',{})).status,200);await settle();assert.ok((await read('preferences',4)).mediaDelivery[personal.id].received.includes(savedPhoto));
+  console.log('Worker single-photo save, destination-only visibility and delivery after source revocation passed. D1 local; Telegram mocked.');
   console.log('Worker personal albums, canonical photo likes, consent and source revocation passed. D1 local; Telegram mocked.');
   console.log('Worker upload completion, shared menus, pending deduplication, delivery receipts and Follow on/off passed. D1 local; Telegram mocked.');
 }finally{await worker.dispose();}

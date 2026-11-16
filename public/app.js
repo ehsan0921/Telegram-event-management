@@ -148,6 +148,7 @@ function format(e, zone = selectedZone()) {
 }
 function openTelegram(url) { if (tg?.initData) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener'); }
 function appendPhotoLinks(node,event){
+  node.append(element('p','Anyone who can view a photo can save it to their own album and share that saved copy. Revoking this album link stops future source access; it does not recall existing saved copies.','small muted'));
   if(event.sharingDisabled)node.append(element('p','PRIVATE · CREATOR ONLY','tag'));
   if(event.isOwner){
     const label=element('label','','check-option'),input=element('input');input.type='checkbox';input.checked=event.showUploaders!==false;
