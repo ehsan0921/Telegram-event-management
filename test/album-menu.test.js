@@ -16,6 +16,17 @@ test('album main menu uses the approved four readable rows and moves management 
   await f.cb(1,'album-more');assert.ok(f.buttons().some(b=>b.callback_data===`album-danger:${f.e.id}`));assert.ok(f.buttons().some(b=>b.text==='🏠 Main menu'));
   await f.cb(2,'album-more');assert.ok(f.buttons().some(b=>b.text==='🚪 Leave album'));assert.ok(!f.buttons().some(b=>b.text==='⚠️ Danger zone'));
 });
+
+test('Album App uses text reply command then authenticated inline launch, preserving album context and input',async()=>{
+ const f=fixture();await f.cb(2,'v');assert.deepEqual(f.last().reply_markup.keyboard[0][0],{text:'📂 Open album app'});assert.ok(f.last().reply_markup.keyboard.flat().every(button=>!button.web_app));const received=structuredClone(f.data.preferences[2].mediaDelivery);f.data.sessions[2]={step:'phone',event:f.e.id,fictionalInput:'keep'};
+ await f.bot.handle({message:{chat:{id:2,type:'private'},from:{id:2},text:'📂 Open album app'}});assert.equal(f.last().reply_markup.inline_keyboard[0][0].web_app.url,'https://example.test/app?gallery='+f.e.id);assert.equal(f.last().reply_markup.keyboard,undefined);assert.deepEqual(f.data.sessions[2],{step:'phone',event:f.e.id,fictionalInput:'keep'});assert.deepEqual(f.data.preferences[2].mediaDelivery,received);assert.ok(f.calls.every(call=>call.method!=='sendMediaGroup' && call.method!=='sendPhoto'));
+});
+
+test('stale-keyboard recovery deep link rechecks current album permission and never grants access or sends media',async()=>{
+ const f=fixture();await f.bot.handle({message:{chat:{id:2,type:'private'},from:{id:2},text:'/start albumapp_'+f.e.id}});assert.equal(f.last().reply_markup.inline_keyboard[0][0].web_app.url,'https://example.test/app?gallery='+f.e.id);
+ const before=structuredClone(f.data);for(const id of [4,2]){if(id===2)f.e.viewToken='f'.repeat(32);await f.bot.handle({message:{chat:{id,type:'private'},from:{id},text:'/start albumapp_'+f.e.id}});assert.match(f.last().text,/unavailable/);assert.equal(f.last().reply_markup,undefined);assert.ok(!f.last().text.includes(f.e.title));}assert.equal(f.data.preferences[4],undefined);assert.deepEqual(f.data.preferences[2].mediaAccess,before.preferences[2].mediaAccess);assert.ok(f.calls.every(call=>call.method==='sendMessage'));
+ f.bot.appUrl='';await f.cb(1,'album-app');assert.match(f.last().text,/not configured/);assert.ok(f.calls.every(call=>call.method==='sendMessage' || call.method==='answerCallbackQuery'));
+});
 test('Share defaults to contributor when permitted, persists OFF, and never changes existing album access or tokens',async()=>{
   const f=fixture(),before=JSON.stringify(f.e),links=photoLinks(f.e,'FictionalBot');
   await f.cb(1,'album-share');assert.match(f.buttons()[0].text,/ON$/);assert.equal(f.buttons().find(b=>b.text==='Copy link').copy_text.text,links.contributor);

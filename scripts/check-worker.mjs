@@ -313,10 +313,12 @@ try {
     assert.ok(fallback,'The unauthenticated launcher must remain available.');
     const launched=[],buttons=[],nodes=new Map();
     const node=id=>{if(!nodes.has(id))nodes.set(id,{replaceChildren(){},getAttribute:()=>developmentBotLink});return nodes.get(id);};
-    const runFallback=new Function('$','notice','element','action','tg','window','options','deviceZone',fallback);
-    const launch=()=>runFallback(node,()=>{},()=>({append:button=>buttons.push(button)}),(label,onclick)=>({label,onclick}),{openTelegramLink:url=>launched.push(url)},{},()=>{},'UTC');
+    const recoveryHelper=source.match(/^function loginRecoveryLink.*$/m)?.[0];assert.ok(recoveryHelper);
+    const runFallback=new Function('$','notice','element','action','tg','window','options','deviceZone','query',recoveryHelper+'\n'+fallback);
+    const launch=(album='')=>runFallback(node,()=>{},()=>({append:button=>buttons.push(button)}),(label,onclick)=>({label,onclick}),{openTelegramLink:url=>launched.push(url)},{},()=>{},'UTC',new URLSearchParams(album?'gallery='+album:''));
     launch();assert.equal(buttons.length,1);assert.equal(buttons[0].label,'App');buttons[0].onclick();
     assert.deepEqual(launched,['https://t.me/fictionalDevelopmentBot?start=app']);
+    buttons.length=0;launch('0123456789abcdef');assert.equal(buttons[0].label,'Open album app');buttons[0].onclick();assert.equal(launched.at(-1),'https://t.me/fictionalDevelopmentBot?start=albumapp_0123456789abcdef');
     developmentBotLink='https://t.me/';buttons.length=0;
     launch();assert.equal(buttons.length,0,'The unconfigured static page must not send guests to another bot.');
   } finally { await development.dispose(); }

@@ -131,6 +131,11 @@ export class Bot {
     this.db.preferences[id] ||= {};this.db.preferences[id].activeAlbum=e.id;rememberAlbumCancelLabel(this,id);
     return albumMain(this,id,e);
   }
+  albumApp(id,e){
+    if(!e || e.cancelled || !this.mediaAllowed(e,id) || !this.mediaCan(e,id,'viewMedia'))return this.send(id,'This album is unavailable. Open a current album link first.');
+    if(!this.appUrl)return this.send(id,'The album app is not configured. No files were sent.');
+    return this.send(id,`${e.title}\nOpen the album using this secure Telegram button.`,keyboard([this.miniButton('📂 Open album app',`?gallery=${e.id}`)]));
+  }
   permissionKeyboard(e, prefix) {
     const settings = permissions(e);
     return paired([
@@ -341,6 +346,8 @@ export class Bot {
     const id = m.from.id;
     if (m.chat.type !== 'private') return this.send(m.chat.id, `Please use me in a private chat: https://t.me/${this.username}`);
     let text = clean(m.text, 3000);
+    const albumAppLink=text.match(/^\/start(?:@\w+)? albumapp_([a-f0-9]{16})$/);
+    if(albumAppLink)return this.albumApp(id,this.db.events[albumAppLink[1]]);
     const albumCommand=albumTextAction(text);
     if(albumCommand){const album=currentAlbum(this,id);if(!album)return this.home(id,'Open an album to use its controls.');if(albumCommand.action==='refresh')return this.mediaCard(id,album);return this.callback({from:m.from,data:`${albumCommand.action}:${album.id}${albumCommand.arg?':'+albumCommand.arg:''}`});}
     const progressCommand=parseProgressText(text);if(progressCommand)return progressTextAction(this,id,progressCommand);
@@ -641,6 +648,7 @@ export class Bot {
     const [action, eid, arg, version] = (q.data || '').split(':');
     const e = this.db.events[eid];
     if(q.id)await this.api('answerCallbackQuery', { callback_query_id: q.id,...(action==='upload-status'?{__uploadNotice:true}:{}) }).catch(() => {});
+    if(action==='album-app')return this.albumApp(id,e);
     if(action==='media-stop')return progressTextAction(this,id,{event:eid,job:arg,cancel:true});
     if(action==='media-cancel')return cancelMedia(this,id,e,arg);
     if(action==='upload-status')return this.uploadStatus(id,eid,q.message);

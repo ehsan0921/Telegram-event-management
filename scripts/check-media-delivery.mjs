@@ -49,6 +49,7 @@ try{
   assert.equal(calls.filter(call=>call.method==='sendMediaGroup').length,1);
   const mediaBeforeRefresh=calls.filter(call=>['sendPhoto','sendMediaGroup'].includes(call.method)).length;await message(2,'🔄 Refresh');await settle();
   const albumKeyboard=calls.findLast(call=>call.method==='sendMessage' && call.reply_markup?.keyboard?.at(-1)?.at(-1)?.text==='🔄 Refresh');assert.ok(albumKeyboard);assert.deepEqual(albumKeyboard.reply_markup.keyboard.at(-1).map(button=>button.text),['🔕 Follow:OFF','⋯ More','🔄 Refresh']);assert.equal(calls.filter(call=>['sendPhoto','sendMediaGroup'].includes(call.method)).length,mediaBeforeRefresh);
+  assert.deepEqual(albumKeyboard.reply_markup.keyboard[0][0],{text:'📂 Open album app'});await message(2,'📂 Open album app');await settle();const secureLaunch=calls.findLast(call=>call.method==='sendMessage' && call.reply_markup?.inline_keyboard?.[0]?.[0]?.web_app);assert.equal(secureLaunch.reply_markup.inline_keyboard[0][0].web_app.url,'https://fictional.test/app?gallery='+album.id);assert.equal(calls.filter(call=>['sendPhoto','sendMediaGroup'].includes(call.method)).length,mediaBeforeRefresh);
   const auth=new URLSearchParams({auth_date:String(Math.floor(Date.now()/1000)),user:JSON.stringify({id:2,first_name:'Fictional viewer'})});
   const dataCheck=[...auth].sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>`${k}=${v}`).join('\n');
   const authKey=createHmac('sha256','WebAppData').update('fictional-token').digest();auth.set('hash',createHmac('sha256',authKey).update(dataCheck).digest('hex'));

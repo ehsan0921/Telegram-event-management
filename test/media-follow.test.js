@@ -47,7 +47,7 @@ test('viewer and contributor menus share layout while viewers never receive cont
   const menus=f.db.prepare("SELECT params FROM outbox WHERE method='sendMessage' ORDER BY rowid").all().map(row=>JSON.parse(row.params));
   const viewer=menus[0],contributor=menus[1];
   assert.deepEqual(viewer.reply_markup.keyboard[1].map(b=>b.text),['📥 Get all (1)','🆕 Get new (1)']);
-  assert.equal(viewer.reply_markup.keyboard[0][0].web_app.url,`https://example.test/app?gallery=${f.album.id}`);
+  assert.deepEqual(viewer.reply_markup.keyboard[0][0],{text:'📂 Open album app'});assert.ok(viewer.reply_markup.keyboard.flat().every(button=>!button.web_app));
   assert.deepEqual(viewer.reply_markup.keyboard.at(-1).map(b=>b.text),['🔔 Follow:ON','⋯ More','🔄 Refresh']);assert.equal(viewer.reply_markup.inline_keyboard,undefined);
   assert.ok(!JSON.stringify(viewer).includes(f.album.uploadToken));assert.ok(JSON.stringify(viewer).includes('➕ Add media'));
   assert.ok(JSON.stringify(contributor).includes('➕ Add media'));assert.ok(!JSON.stringify(contributor).includes(f.album.uploadToken));
