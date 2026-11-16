@@ -646,7 +646,7 @@ export class Bot {
         if(!unknown.length)return refreshMedia(this,id);
         if(arg!=='confirm')return this.send(id,`Delivery of ${unknown.length} files is unconfirmed. Check your chat first. Retrying may send copies of files that already arrived.`,keyboard([button('Retry unconfirmed files',`media-retry:${e.id}:confirm`),button('Keep waiting',`v:${e.id}`)]));
         for(const mid of unknown){delete state.pending[mid];delete state.uncertain[mid];if(state.uncertainReason)delete state.uncertainReason[mid];if(state.cancelled)delete state.cancelled[mid];}
-        const files=e.media.filter(file=>unknown.includes(file.id));const queued=await queueMediaFiles(this,id,e,files);if(this.durableMediaDelivery){startProgress(this,id,e,files);return;}await this.send(id,`${queued} files processed.`);return this.mediaCard(id,e);
+        this.resumeMedia?.(id);const files=e.media.filter(file=>unknown.includes(file.id));const queued=await queueMediaFiles(this,id,e,files);if(this.durableMediaDelivery){startProgress(this,id,e,files);return;}await this.send(id,`${queued} files processed.`);return this.mediaCard(id,e);
       }
       if(action==='media-follow'){
         if(!['on','off'].includes(arg))return this.mediaCard(id,e);

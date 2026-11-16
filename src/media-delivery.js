@@ -117,3 +117,7 @@ export function deliveryStatus(state,media,request){
   const result=state?.results?.[media];
   return result?.token===request && ['sent','failed','cancelled'].includes(result.status)?result.status:'unconfirmed';
 }
+
+export function clearResolvedMediaHold(data,user,persist){
+  if(!Object.values(data.preferences[user]?.mediaDelivery || {}).some(state=>Object.keys(state.uncertain || {}).length))persist("UPDATE records SET data=json_set(data,'$.blocked',0) WHERE kind='media_chat_state' AND id=?",String(user));
+}

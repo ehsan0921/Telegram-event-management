@@ -1,24 +1,25 @@
 import {markProgress,progressReady} from './media-progress-core.js';
 import {mediaMethods} from './media-preview.js';
-import {mutateState} from './worker-store.js';
-import {mediaDeliveryPayload,mediaDeliveryResult,mediaDeliveryState} from './media-delivery.js';
+import {mutateMediaState} from './worker-store.js';
+import {mediaDeliveryPayload,mediaDeliveryResult,mediaDeliveryState,clearResolvedMediaHold} from './media-delivery.js';
 
 export async function prepareMediaGroup(env,row){
   const saved=JSON.parse(row.params),first=saved.__mediaGroup?.[0] || saved.__mediaDelivery;
   if(!first || saved.__mediaDelivered)return false;
-  const held=await mutateState(env,(data,bot)=>(saved.__mediaGroup || [saved.__mediaDelivery]).some(item=>data.preferences[item.user]?.mediaDelivery?.[item.event]?.cancelled?.[item.media]!==item.token && !progressReady(data,item) && !!mediaDeliveryPayload(bot,item)));
+  const scope=saved.__mediaGroup || [saved.__mediaDelivery];
+  const held=await mutateMediaState(env,scope,(data,bot)=>(saved.__mediaGroup || [saved.__mediaDelivery]).some(item=>data.preferences[item.user]?.mediaDelivery?.[item.event]?.cancelled?.[item.media]!==item.token && !progressReady(data,item) && !!mediaDeliveryPayload(bot,item)));
   if(held){await env.DB.prepare('UPDATE outbox SET due=unixepoch()+1 WHERE id=?').bind(row.id).run();return 'deferred';}
-  const previous=await env.DB.prepare("SELECT due FROM outbox WHERE rowid<(SELECT rowid FROM outbox WHERE id=?) AND coalesce(json_extract(params,'$.__mediaGroup[0].user'),json_extract(params,'$.__mediaDelivery.user'))=? AND coalesce(json_extract(params,'$.__mediaGroup[0].event'),json_extract(params,'$.__mediaDelivery.event'))=? ORDER BY rowid LIMIT 1").bind(row.id,first.user,first.event).first();
+  const previous=await env.DB.prepare("SELECT due FROM outbox WHERE rowid<(SELECT rowid FROM outbox WHERE id=?) AND coalesce(json_extract(params,'$.__mediaGroup[0].user'),json_extract(params,'$.__mediaDelivery.user'))=? ORDER BY rowid LIMIT 1").bind(row.id,first.user).first();
   if(previous){await env.DB.prepare('UPDATE outbox SET due=? WHERE id=?').bind(Math.max(previous.due,Math.floor(Date.now()/1000)+1),row.id).run();return 'deferred';}
   if(saved.__mediaGroup)return true;
   const items=[saved.__mediaDelivery],ids=[];
-  const next=await env.DB.prepare("SELECT id,method,params,due FROM outbox WHERE rowid>(SELECT rowid FROM outbox WHERE id=?) AND coalesce(json_extract(params,'$.__mediaGroup[0].user'),json_extract(params,'$.__mediaDelivery.user'))=? AND coalesce(json_extract(params,'$.__mediaGroup[0].event'),json_extract(params,'$.__mediaDelivery.event'))=? ORDER BY rowid LIMIT 9").bind(row.id,first.user,first.event).all();
+  const next=await env.DB.prepare("SELECT id,method,params,due FROM outbox WHERE rowid>(SELECT rowid FROM outbox WHERE id=?) AND coalesce(json_extract(params,'$.__mediaGroup[0].user'),json_extract(params,'$.__mediaDelivery.user'))=? ORDER BY rowid LIMIT 9").bind(row.id,first.user).all();
   const candidates=[row,...next.results];
-  const types=await mutateState(env,(_data,bot)=>candidates.map(candidate=>{const tracking=JSON.parse(candidate.params).__mediaDelivery,payload=tracking && mediaDeliveryPayload(bot,tracking);return payload && progressReady(bot.db,tracking)?Object.keys(mediaMethods).find(type=>payload[type]):null;}));
+  const types=await mutateMediaState(env,scope,(_data,bot)=>candidates.map(candidate=>{const tracking=JSON.parse(candidate.params).__mediaDelivery,payload=tracking && mediaDeliveryPayload(bot,tracking);return payload && progressReady(bot.db,tracking)?Object.keys(mediaMethods).find(type=>payload[type]):null;}));
   const category=type=>['photo','video'].includes(type)?'visual':['document','audio'].includes(type)?type:null;
   if(category(types[0]))for(let index=1;index<candidates.length;index++){
     const candidate=candidates[index],params=JSON.parse(candidate.params);
-    if(candidate.due>Math.floor(Date.now()/1000) || !params.__mediaDelivery || params.__mediaDelivered || category(types[index])!==category(types[0]))break;
+    if(candidate.due>Math.floor(Date.now()/1000) || !params.__mediaDelivery || params.__mediaDelivery.event!==first.event || params.__mediaDelivered || category(types[index])!==category(types[0]))break;
     items.push(params.__mediaDelivery);ids.push(candidate.id);
   }
   row.params=JSON.stringify({chat_id:first.user,__mediaGroup:items});
@@ -35,24 +36,28 @@ export async function prepareMediaGroup(env,row){
 export async function deliverMediaGroup(env,row,telegram){
   let saved=JSON.parse(row.params),items=saved.__mediaGroup;
   if(!Array.isArray(items))return false;
+  const scope=items;
   const remove=persist=>persist('DELETE FROM outbox WHERE id=?',row.id);
   if(saved.__mediaGroupDelivered){
-    await mutateState(env,(data,_bot,{persist})=>{for(const item of items)mediaDeliveryResult(data,item,true);remove(persist);});
+    await mutateMediaState(env,scope,(data,_bot,{persist})=>{for(const item of items)mediaDeliveryResult(data,item,true);clearResolvedMediaHold(data,items[0].user,persist);remove(persist);});
     return true;
   }
   async function uncertain(reason='unknown'){
-    await mutateState(env,async(data,bot,{persist})=>{
+    await mutateMediaState(env,scope,async(data,bot,{persist})=>{
       for(const item of items){
         const state=mediaDeliveryState(data,item.user,item.event);
         if(state.pending[item.media]===item.token){state.uncertain ||= {};state.uncertain[item.media]=item.token;state.uncertainReason ||= {};state.uncertainReason[item.media]=reason;markProgress(data,item,reason==='partial'?'partial':'unconfirmed');}
       }
       const first=items[0],e=data.events[first.event];
+      // A recovered/ambiguous send cannot be proven finished. Hold later batches
+      // for this chat until its user explicitly reviews and requests a retry.
+      persist("INSERT INTO records(kind,id,data) VALUES ('media_chat_state',?,json_object('blocked',1)) ON CONFLICT(kind,id) DO UPDATE SET data=json_set(records.data,'$.blocked',1)",String(first.user));
       if(bot.mediaAllowed(e,first.user) && bot.mediaCan(e,first.user,'viewMedia'))await bot.send(first.user,`Delivery of ${items.length} files could not be confirmed. Check your Telegram chat before retrying; they may already be there. Use /refresh to review unconfirmed deliveries.`);
       remove(persist);
     });
   }
   if(saved.__mediaGroupAttempted){await uncertain();return true;}
-  const prepared=await mutateState(env,(data,bot,{persist})=>{
+  const prepared=await mutateMediaState(env,scope,(data,bot,{persist})=>{
     const valid=[],payloads=[];
     for(const item of items){const payload=mediaDeliveryPayload(bot,item);if(payload){valid.push(item);payloads.push(payload);markProgress(data,item,'inflight',false);}else mediaDeliveryResult(data,item,false);}
     if(!valid.length)remove(persist);
@@ -80,18 +85,18 @@ export async function deliverMediaGroup(env,row,telegram){
     if(!valid){await uncertain(Array.isArray(receipts) && receipts.length>0 && receipts.length<items.length?'partial':'unknown');return true;}
     saved.__mediaGroupDelivered=receipts.map(message=>message.message_id);
     await env.DB.prepare('UPDATE outbox SET params=? WHERE id=?').bind(JSON.stringify(saved),row.id).run();
-    await mutateState(env,(data,_bot,{persist})=>{for(const item of items)mediaDeliveryResult(data,item,true);remove(persist);});
+    await mutateMediaState(env,scope,(data,_bot,{persist})=>{for(const item of items)mediaDeliveryResult(data,item,true);clearResolvedMediaHold(data,items[0].user,persist);remove(persist);});
     return true;
   }
   if(result.error_code===429){
-    await mutateState(env,data=>{for(const item of items)markProgress(data,item,'queued');});
+    await mutateMediaState(env,scope,data=>{for(const item of items)markProgress(data,item,'queued');});
     delete saved.__mediaGroupAttempted;
     const seconds=Math.max(1,Math.min(Number(result.parameters?.retry_after) || 5,3600));
     await env.DB.prepare('UPDATE outbox SET params=?,due=unixepoch()+? WHERE id=?').bind(JSON.stringify(saved),seconds,row.id).run();
     return 'retry';
   }
   if([400,403].includes(result.error_code)){
-    await mutateState(env,async(data,bot,{persist})=>{
+    await mutateMediaState(env,scope,async(data,bot,{persist})=>{
       for(const item of items)mediaDeliveryResult(data,item,false);
       if(!result.snapshotBlocked)await bot.send(items[0].user,`${items.length} files could not be delivered. They have not been marked as received. Use Get new media to try again.`);
       remove(persist);
