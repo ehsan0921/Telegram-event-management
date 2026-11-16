@@ -47,7 +47,7 @@ test('personal album creation is private, owned and idempotent; legacy collectio
 });
 
 test('view permission alone and co-host access do not authorize linking; owner opt-in is versioned and confirmed',async t=>{
- const f=fixture(t),before=structuredClone(f.read('events',f.dest.id));const source=f.read('events',f.source.id);source.cohost={id:6,name:'Fictional cohost'};f.save('events',source.id,source);assert.equal((await f.api(6,'events/'+source.id+'/gallery')).status,200);
+ const f=fixture(t),before=structuredClone(f.read('events',f.dest.id));const source=f.read('events',f.source.id);source.cohost={id:6,name:'Fictional cohost'};f.save('events',source.id,source);assert.equal((await f.api(6,'events/'+source.id+'/gallery')).status,200);assert.ok((await f.value(1,'albums/'+source.id+'/manage')).members.some(person=>person.id===6));
  const request={sourceEvent:f.source.id,mediaIds:['111111111111'],requestId:randomUUID()};
  assert.equal((await f.api(2,'albums/'+f.dest.id+'/references',request)).status,403);assert.deepEqual(f.read('events',f.dest.id),before);
  for(const uid of [2,3,4,6])assert.equal((await f.api(uid,'albums/'+f.source.id+'/reshare',{allowed:true,confirm:true,version:0})).status,403);

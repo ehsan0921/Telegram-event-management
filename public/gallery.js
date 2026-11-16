@@ -89,8 +89,9 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
     await load();
   }
   async function removeAlbumMedia(id,file,version){
-    if(!await confirmMediaAction('Remove this item from your personal album? A linked item is removed only here; its original and source album are unchanged. Previously delivered copies cannot be recalled.','album-media-remove'))return;
-    await api(`albums/${id}/remove`,{mediaId:file.id,version,confirm:true});await refreshAlbums?.();await openGallery(id);notice('Removed from this album. The original source is unchanged.');
+    const message=file.reference?'Remove this linked item from your album? Its original and source album are unchanged. Previously delivered copies cannot be recalled.':'Remove this original item from your album? Other albums linking this original will lose access to it. Previously delivered copies cannot be recalled.';
+    if(!await confirmMediaAction(message,'album-media-remove'))return;
+    await api(`albums/${id}/remove`,{mediaId:file.id,version,confirm:true});await refreshAlbums?.();await openGallery(id);notice(file.reference?'Removed from this album. The original source is unchanged.':'Removed from this album. Previously delivered copies remain.');
   }
   function mediaManagement(id,parent,current){
     const panel=element('details','','album-access'),heading=element('summary','Media access & linking'),body=element('div');panel.append(heading,body);parent.append(panel);let busy=false;
@@ -176,7 +177,7 @@ export function setupGallery({ $, api, element, action, go, notice, openTelegram
       $('gallery-qr').hidden=!gallery.galleryUrl || gallery.qrEnabled===false;
       $('gallery-qr').onclick=()=>showQr(id,true);
       const list=$('gallery-list');list.replaceChildren();if(!gallery.media.length)list.append(element('p','No files have been shared yet.','muted'));
-      if(gallery.canRemove)for(const file of gallery.unavailable || []){const row=element('article','','gallery-item');row.append(element('p','Linked media unavailable: source access or linking permission changed.','small muted'),action('Remove unavailable link',()=>removeAlbumMedia(id,file,gallery.mediaVersion).catch(error=>notice(error.message)),'secondary'));list.append(row);}
+      if(gallery.canRemove)for(const file of gallery.unavailable || []){const row=element('article','','gallery-item');row.append(element('p','Linked media unavailable: source access or linking permission changed.','small muted'),action('Remove unavailable link',()=>removeAlbumMedia(id,{...file,reference:true},gallery.mediaVersion).catch(error=>notice(error.message)),'secondary'));list.append(row);}
       const sortedMedia=gallery.media.map((file,index)=>({file,index})).sort((a,b)=>(Date.parse(b.file.at) || 0)-(Date.parse(a.file.at) || 0) || b.index-a.index).map(item=>item.file);
       for(const file of sortedMedia) {
         const kind=file.previewKind || (['photo','video'].includes(file.type)?file.type:null),previewFile={...file,type:kind};

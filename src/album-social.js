@@ -1,3 +1,4 @@
+import {cohostEntries} from './cohosts.js';
 import {rememberUser} from './admin.js';
 import {randomBytes} from 'node:crypto';
 import {mutateState,BusyError} from './worker-store.js';
@@ -34,7 +35,7 @@ export const likeIdentity=likeKey;
 async function managedMembers(env,event){
  const {results}=await env.DB.prepare("SELECT id,data FROM records WHERE kind='preferences' AND json_extract(data,?) IS NOT NULL").bind(`$.mediaAccess."${event.id}"`).all();
  const prefs=Object.fromEntries(results.map(row=>[row.id,JSON.parse(row.data)]));
- const ids=[...new Set([...Object.keys(prefs),...Object.keys(event.guests || {}),...Object.keys(event.mediaRevokedUsers || {})])].filter(value=>/^[1-9]\d*$/.test(value) && Number(value)!==event.owner);
+ const ids=[...new Set([...Object.keys(prefs),...Object.keys(event.guests || {}),...Object.keys(event.mediaRevokedUsers || {}),...cohostEntries(event).filter(entry=>entry.status==='active' && entry.cohost).map(entry=>String(entry.cohost.id))])].filter(value=>/^[1-9]\d*$/.test(value) && Number(value)!==event.owner);
  const profiles=await env.DB.prepare("SELECT id,data FROM records WHERE kind='users' AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)).all(),names=new Map(profiles.results.map(row=>{const u=JSON.parse(row.data);return [row.id,[u.firstName,u.lastName].filter(Boolean).join(' ')];}));
  return ids.map(uid=>({id:Number(uid),name:names.get(uid) || event.guests?.[uid]?.name || 'Telegram user',blocked:mediaRevoked(event,Number(uid)),role:mediaRole(event,Number(uid),prefs[uid]) || (event.kind!=='photos' && event.guests?.[uid] && canViewMedia({preferences:prefs},event,Number(uid))?'guest':null)})).filter(person=>person.blocked || person.role).sort((a,b)=>a.name.localeCompare(b.name));
 }
