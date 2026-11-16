@@ -5,8 +5,9 @@ export function photoCollection(title,owner,showUploaders=true) {
   return {id:randomBytes(8).toString('hex'),kind:'photos',title,owner,showUploaders,invitationMode:'tickets',isPublic:false,guests:{},media:[],cancelled:false,createdAt:new Date().toISOString(),permissions:{guestList:false,viewMedia:true,uploadMedia:true},allowLinkUploads:true,uploadToken:randomBytes(16).toString('hex'),viewToken:randomBytes(16).toString('hex'),qrEnabled:true,location:'',description:'',questions:[],defaultReminder:0};
 }
 export const showsUploaders=e=>e.kind!=='photos' || e.showUploaders!==false;
+export const mediaRevoked=(e,id)=>!!e && e.owner!==id && !!e.mediaRevokedUsers?.[String(id)];
 export function mediaRole(e,id,preference={}) {
-  if(!e || e.cancelled)return null;
+  if(!e || e.cancelled || mediaRevoked(e,id))return null;
   if(e.kind==='photos' && e.sharingDisabled)return e.owner===id?'owner':null;
   if(isManager(e,id))return 'owner';
   const token=preference.mediaAccess?.[e.id];
@@ -15,6 +16,7 @@ export function mediaRole(e,id,preference={}) {
   return null;
 }
 export function mediaCan(e,id,key,preference={}) {
+  if(mediaRevoked(e,id))return false;
   const role=mediaRole(e,id,preference);
   if(e?.kind==='photos')return ['viewMedia','uploadMedia'].includes(key) && (role==='owner' || role==='contributor' || role==='viewer' && key==='viewMedia');
   return can(e,id,key);

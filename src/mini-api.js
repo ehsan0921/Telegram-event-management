@@ -1,9 +1,10 @@
+import {albumSocialApi} from './album-social.js';
 import {parseEventPayment,paymentMethod,paidEvent} from './event-payment.js';
 import {readAlbumMembers} from './album-members.js';
 import {changeAlbumAccess} from './album-access.js';
 import {mediaDates} from './media-preview.js';
 import {leaveAlbum,visibleStuff,removeInvitation as removeOwnInvitation} from './stuff.js';
-import {mediaRole} from './permissions.js';
+import {mediaRole,mediaRevoked,mediaCan} from './permissions.js';
 import {guestMessageApi} from './guest-message-api.js';
 import {issueTicket,verifyTicket} from './tickets.js';
 import {profileFields,profilePreference,profilePhotoApi} from './profile.js';
@@ -91,7 +92,7 @@ export function publicEvent(e, id, username, preference={}) {
   const manager=isManager(e,id),owner=e.owner===id;
   const entries=cohostEntries(e),cohosts=entries.filter(entry=>entry.status==='active' && entry.cohost).map(entry=>entry.cohost);
   return {
-    kind:e.kind || 'event',mediaRole:e.kind==='photos' ? mediaRole(e,id,preference) : manager ? 'owner' : can(e,id,'uploadMedia') ? 'contributor' : can(e,id,'viewMedia') ? 'viewer' : null,responseVersion:e.guests[id]?.responseVersion || 0,...(e.kind==='photos' ? {showUploaders:e.showUploaders!==false,sharingDisabled:e.sharingDisabled===true,albumAccessVersion:e.albumAccessVersion || 0} : {}),...(owner && e.kind==='photos' ? {photoLinks:photoLinks(e,username)} : {}),
+    mediaAccessDenied:mediaRevoked(e,id),personalAlbum:e.personalAlbum===true,kind:e.kind || 'event',mediaRole:e.kind==='photos' ? mediaRole(e,id,preference) : manager ? 'owner' : can(e,id,'uploadMedia') ? 'contributor' : can(e,id,'viewMedia') ? 'viewer' : null,responseVersion:e.guests[id]?.responseVersion || 0,...(e.kind==='photos' ? {showUploaders:e.showUploaders!==false,sharingDisabled:e.sharingDisabled===true,albumAccessVersion:e.albumAccessVersion || 0} : {}),...(owner && e.kind==='photos' ? {photoLinks:photoLinks(e,username)} : {}),
     invitationMode:invitationMode(e),guestName:e.owner!==id ? e.guests[id]?.name || null : null,
     askPhone:asksPhone(e),askComments:asksComments(e),
     ...(manager ? {guestRoster:[...Object.entries(e.guests).filter(([uid])=>Number(uid)!==e.owner).map(([uid,g])=>({id:Number(uid),name:g.name,status:g.status,responded:hasRecordedResponse(g,invitationHistory(e,g.invitationToken),Number(uid)),approval:g.status==='yes' ? requiresApproval(e) ? g.approval || 'pending' : 'approved' : null,confirmed:confirmed(e,g),participants:participantCount(e,g),paymentStatus:g.payment?.status || null})),...Object.entries(e.invitees || {}).filter(([token])=>!Object.values(e.guests).some(g=>g.invitationToken===token)).map(([token,g])=>({id:null,name:g.name,status:'unopened',responded:false,participants:participantCount(e,{...g,invitationToken:token}),confirmed:false}))]} : {}),
@@ -109,8 +110,8 @@ export function publicEvent(e, id, username, preference={}) {
     ...(manager || (e.guests[id]?.status === 'yes' && (!requiresApproval(e) || e.guests[id]?.approval === 'approved')) ? {paymentInstructions:e.paymentInstructions || '',paymentUrl:e.paymentUrl || ''} : {}),
     starPrice:e.starPrice || 0, starPricing:e.starPricing || 'group', paymentTerms:e.paymentTerms || '', paymentStatus:e.guests[id]?.payment?.status || null,
     defaultReminder: e.defaultReminder || 0,
-    mediaCount: can(e, id, 'viewMedia') ? e.media?.length || 0 : null,
-    imageCount: can(e, id, 'viewMedia') ? e.media?.filter(f => f.type === 'photo').length || 0 : null,
+    mediaCount: mediaCan(e,id,'viewMedia',preference) ? e.media?.length || 0 : null,
+    imageCount: mediaCan(e,id,'viewMedia',preference) ? e.media?.filter(f => f.type === 'photo').length || 0 : null,
     ...(manager ? { allowLinkUploads: !!e.allowLinkUploads, uploadLink: shareUploadLink(e, username) } : {}),
     group: e.kind==='photos'?'Photo collections':eventGroup(e), upcoming: upcoming(e), reminder: e.reminders?.[id]?.minutes || 0, hasBanner: !!e.banner,
     askParticipantCount: asksParticipantCount(e), participants: e.guests[id]?.status === 'yes' ? participantCount(e, e.guests[id]) : null, requireApproval: requiresApproval(e), hideLocation: hidesLocation(e),
@@ -178,6 +179,7 @@ async function miniApiForUser(request, env, user) {
     const events = results.map(r => JSON.parse(r.data)).filter(e => !e.cancelled && Date.parse(e.endsAt || e.startsAt) > Date.now()).sort((a,b) => Date.parse(a.startsAt)-Date.parse(b.startsAt)).map(e => ({ id: e.id, title: e.title, description: e.description, paymentMethod:paymentMethod(e),displayPrice:e.displayPrice || '', starPrice:e.starPrice || 0, starPricing:e.starPricing || 'group', startsAt: e.startsAt, endsAt: e.endsAt || null, timezone: e.timezone, hasBanner: !!e.banner, inviteUrl: `https://t.me/${env.BOT_USERNAME}?start=e_${e.id}`, responsesClosed: responsesClosed(e) }));
     return respond({ timezone: zone, events });
   }
+  const socialResponse=await albumSocialApi(request,env,user);if(socialResponse)return socialResponse;
   const mediaResponse = await mediaApi(request, env, user);
   if (mediaResponse) return mediaResponse;
   if (path.startsWith('/api/admin')) {
@@ -352,7 +354,9 @@ async function miniApiForUser(request, env, user) {
         if (existing) return { event: publicEvent(existing, id, env.BOT_USERNAME) };
         if(path==='/api/collections') {
           if(input.showUploaders!==undefined && typeof input.showUploaders!=='boolean')throw new InputError('Choose whether to show uploader names.');
+          if(input.personal!==undefined && typeof input.personal!=='boolean')throw new InputError('Choose a personal album option.');
           const e=photoCollection(field(input.title,'Collection name',100,true),id,input.showUploaders ?? true);
+          if(input.personal===true){if(env.ALBUM_SOCIAL_ENABLED==='false')throw new InputError('Personal album creation is temporarily paused.');e.personalAlbum=true;e.sharingDisabled=true;}
           e.createRequestId=input.requestId;data.events[e.id]=e;
           await bot.card(id,e);
           return {event:publicEvent(e,id,env.BOT_USERNAME)};

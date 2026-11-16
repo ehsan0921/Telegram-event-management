@@ -28,6 +28,15 @@ export async function mutateState(env, action, updateId, scope) {
       query=env.DB.prepare(`SELECT kind,id,data FROM records WHERE (kind IN ('preferences','sessions') AND id IN (${marks(users)})) OR (kind='events' AND (id IN (${marks(events)}) OR id IN (SELECT j.key FROM records p,json_each(p.data,'$.mediaDelivery') j WHERE p.kind='preferences' AND p.id IN (${marks(users)}))))`).bind(...users,...events,...users);
     }
     const {results}=await query.all();
+    if(scope){
+      const albums=results.filter(row=>row.kind==='events').map(row=>JSON.parse(row.data));
+      const sources=[...new Set(albums.flatMap(e=>(e.media || []).map(file=>file.reference?.event).filter(Boolean)))];
+      const creators=[...new Set(albums.filter(e=>e.media?.some(file=>file.reference)).map(e=>String(e.owner)))];
+      if(sources.length){
+        const extra=await env.DB.prepare("SELECT kind,id,data FROM records WHERE (kind='events' AND id IN (SELECT value FROM json_each(?))) OR (kind='preferences' AND id IN (SELECT value FROM json_each(?)))").bind(JSON.stringify(sources),JSON.stringify(creators)).all();
+        const loaded=new Set(results.map(row=>row.kind+':'+row.id));for(const row of extra.results)if(!loaded.has(row.kind+':'+row.id))results.push(row);
+      }
+    }
     const data = { events: {}, sessions: {}, preferences: {} };
     for (const row of results) data[row.kind][row.id] = JSON.parse(row.data);
     const before = new Map(results.map(r => [`${r.kind}:${r.id}`, r.data]));
@@ -45,7 +54,7 @@ export async function mutateState(env, action, updateId, scope) {
         settings.push(env.DB.prepare('INSERT INTO app_settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(key, value));
       }
     });
-    await flushProgress(bot);
+    await flushProgress(bot,scope?new Set(scope.users):null);
     const batch = [env.DB.prepare('INSERT INTO commits(owner) VALUES (?)').bind(owner), ...settings];
     for (const kind of ['events', 'sessions', 'preferences']) {
       for (const [id, record] of Object.entries(data[kind])) {

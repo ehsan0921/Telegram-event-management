@@ -11,7 +11,8 @@ export function changeAlbumAccess(data,id,album,{action,confirm,version}={}){
   album.mediaUpdatedAt=new Date().toISOString();
   for(const preference of Object.values(data.preferences)){
     if(preference.mediaAccess)delete preference.mediaAccess[album.id];
-    if(preference.mediaDelivery)delete preference.mediaDelivery[album.id];
+    const delivery=preference.mediaDelivery?.[album.id];
+    if(delivery){delivery.cancelled ||= {};for(const [mid,token] of Object.entries(delivery.pending || {}))if(delivery.uncertain?.[mid]!==token)delivery.cancelled[mid]=token;}
   }
   for(const [uid,session] of Object.entries(data.sessions))if(session.event===album.id){
     if(Number(uid)!==album.owner)delete data.sessions[uid];

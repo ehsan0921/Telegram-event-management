@@ -41,12 +41,13 @@ test('gallery shows a direct sharing action and respects disabled QR codes',asyn
 function galleryHarness(t,api=async()=>({title:'Club meetup',media:[],canUpload:false}),renderAlbumDetails){
   class Node{
     constructor(tag='div',text=''){this.tagName=tag.toUpperCase();this.textContent=text;this.children=[];this.attributes={};this.isConnected=true;this.open=false;this.opens=0;this.pauses=0;this.loads=0;}
-    append(...children){this.children.push(...children);}
+    append(...children){for(const child of children)child.parent=this;this.children.push(...children);}
     prepend(...children){this.children.unshift(...children);}
     replaceChildren(...children){for(const child of this.children)child.isConnected=false;this.children=children;}
     setAttribute(key,value){this.attributes[key]=value;}
     removeAttribute(key){delete this.attributes[key];delete this[key];}
-    remove(){this.isConnected=false;}
+    remove(){this.isConnected=false;if(this.parent)this.parent.children=this.parent.children.filter(child=>child!==this);}
+    insertBefore(child,before){child.parent=this;this.children.splice(this.children.indexOf(before),0,child);}
     showModal(){this.open=true;this.opens++;}
     close(){this.open=false;this.onclose?.();}
     pause(){this.pauses++;}
@@ -55,7 +56,7 @@ function galleryHarness(t,api=async()=>({title:'Club meetup',media:[],canUpload:
   }
   const globals={document:globalThis.document,IntersectionObserver:globalThis.IntersectionObserver,fetch:globalThis.fetch};
   t.after(()=>{for(const [name,value] of Object.entries(globals)){if(value===undefined)delete globalThis[name];else globalThis[name]=value;}});
-  globalThis.document={createElement:tag=>new Node(tag)};
+  globalThis.document={body:new Node('body'),createElement:tag=>new Node(tag)};
   const observers=[];
   globalThis.IntersectionObserver=class{
     constructor(callback){this.callback=callback;observers.push(this);}
@@ -71,7 +72,7 @@ function galleryHarness(t,api=async()=>({title:'Club meetup',media:[],canUpload:
   const action=new Function('element','notice','return ('+productionAction+');')(element,message=>notices.push(message));
   const controls=setupGallery({$,api:(...args)=>{calls.push(args);return api(...args);},element,action,go:route=>routes.push(route),notice:message=>notices.push(message),openTelegram(){},initData:'fictional-init-data',renderAlbumDetails});
   const descendants=node=>[node,...node.children.flatMap(descendants)];
-  return {$,calls,notices,routes,fetches,observers,...controls,setFetch(fn){fetchResult=fn;},button:text=>descendants($('gallery-list')).find(node=>node.tagName==='BUTTON' && node.textContent===text)};
+  return {$,calls,notices,routes,fetches,observers,...controls,setFetch(fn){fetchResult=fn;},all:()=>[...nodes.values(),document.body].flatMap(descendants),button:text=>descendants($('gallery-list')).find(node=>node.tagName==='BUTTON' && node.textContent===text)};
 }
 
 test('opening another gallery clears the previous event upload action while loading and after failure',async()=>{
@@ -227,4 +228,17 @@ for(const status of ['partial','unconfirmed','failed','cancelled'])test(`Mini Ap
   const f=galleryHarness(t,async path=>path.endsWith('/send')?{status,request:'a'.repeat(16)}:{title:'Fictional',media:[{id:'fictional',type:'document',filename:'example.pdf'}]});
   await f.openGallery('fictional');await f.button('Send to Telegram').onclick();
   assert.ok(!f.notices.includes('sent'));assert.equal(f.calls.filter(([path])=>path.endsWith('/send')).length,1);assert.equal(f.calls.filter(([path])=>path.includes('/delivery-status?')).length,0);
+});
+
+test('photo Like updates only after server confirmation, is idempotent while pending, and shows authorized names',async t=>{
+ const pending=deferred(),file={id:'111111111111',type:'photo',filename:'photo',canLike:true,likeCount:2,liked:false,canLink:false};
+ const f=galleryHarness(t,async(path,input)=>{if(path.endsWith('/likes'))return pending.promise;if(path.includes('/likes?'))return {count:3,liked:true,likers:[{name:'Fictional viewer'}],next:null};return {title:'Fictional album',socialFeatures:true,media:[file]};});
+ await f.openGallery('0123456789abcdef');const like=f.all().find(n=>n.tagName==='BUTTON' && n.textContent.endsWith(' Like'));assert.equal(like.attributes['aria-pressed'],'false');const clicked=like.onclick();assert.equal(like.disabled,true);assert.equal(like.attributes['aria-pressed'],'false');await like.onclick();assert.equal(f.calls.filter(([path])=>path.endsWith('/likes')).length,1);
+ pending.resolve({liked:true,count:3});await clicked;assert.equal(like.attributes['aria-pressed'],'true');assert.equal(like.disabled,false);const count=f.all().find(n=>n.tagName==='BUTTON' && n.textContent==='3 likes');await count.onclick();assert.ok(f.all().some(n=>n.textContent==='Fictional viewer'));assert.ok(f.all().some(n=>n.textContent.includes('Liking a photo makes your name')));f.dismissPendingMedia();assert.equal(document.body.children.length,0);
+});
+
+test('personal-album controls disable unauthorized imports and expose removable unavailable references only to owners',async t=>{
+ const f=galleryHarness(t,async()=>({title:'Fictional',socialFeatures:true,isOwner:true,canRemove:true,mediaVersion:2,unavailable:[{id:'222222222222'}],media:[{id:'111111111111',type:'photo',filename:'photo',canLike:true,canLink:false}]}));await f.openGallery('0123456789abcdef');
+ const add=f.all().find(n=>n.tagName==='BUTTON' && n.textContent==='Add to personal album');assert.equal(add.disabled,true);assert.ok(f.all().some(n=>n.textContent==='Remove unavailable link'));await f.button('Remove from album').onclick();assert.equal(f.calls.length,1);
+ const create=f.all().find(n=>n.tagName==='BUTTON' && n.textContent.endsWith('New personal album'));await create.onclick();assert.ok(f.all().some(n=>n.textContent==='Create private album'));assert.ok(document.body.children.some(n=>n.open));f.dismissPendingMedia();assert.equal(document.body.children.length,0);
 });

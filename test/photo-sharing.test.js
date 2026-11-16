@@ -161,7 +161,7 @@ test('viewers cannot upload via callbacks, guessed upload links or stale contrib
 
 test('gallery enforces role grants, shares only the viewer link and rejects invalidated tokens',async()=>{
   const e=photoCollection('Fictional gallery',1),pref={mediaAccess:{[e.id]:e.viewToken}};
-  const env={BOT_USERNAME:'FictionalPhotosBot',DB:{prepare(sql){return {bind(){return this;},async first(){return {data:JSON.stringify(sql.includes("kind='events'")?e:pref)};}};}}};
+  const env={BOT_USERNAME:'FictionalPhotosBot',DB:{prepare(sql){return {bind(){return this;},async first(){return {data:JSON.stringify(sql.includes("kind='events'")?e:pref)};},async all(){return {results:[]};}};}}};
   const request=()=>new Request(`https://example.test/api/events/${e.id}/gallery`);
   let response=await mediaApi(request(),env,{id:2}),body=await response.json();
   assert.equal(response.status,200);assert.equal(body.canUpload,false);assert.equal(body.galleryUrl,photoLinks(e,env.BOT_USERNAME).viewer);
@@ -187,7 +187,7 @@ test('only owners change uploader visibility and hidden names never appear in ga
   await f.cb(2,'photo-names:'+e.id);assert.equal(e.showUploaders,true);
   await f.cb(1,'photo-names:'+e.id);assert.equal(e.showUploaders,false);
   const pref=f.store.data.preferences[2];
-  const env={BOT_USERNAME:'FictionalPhotosBot',DB:{prepare(sql){return {bind(){return this;},async first(){return {data:JSON.stringify(sql.includes("kind='events'")?e:pref)};}};}}};
+  const env={BOT_USERNAME:'FictionalPhotosBot',DB:{prepare(sql){return {bind(){return this;},async first(){return {data:JSON.stringify(sql.includes("kind='events'")?e:pref)};},async all(){return {results:[]};}};}}};
   const request=()=>new Request(`https://example.test/api/events/${e.id}/gallery`);
   const hidden=await(await mediaApi(request(),env,{id:2})).json();
   assert.equal(hidden.media[0].name,null);assert.equal(hidden.media[0].by,undefined);
