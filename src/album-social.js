@@ -60,7 +60,8 @@ export async function albumSocialApi(request,env,user){
    if(!file || mediaPreview(file)!=='photo')fail('This photo is unavailable.',403);
    if(request.method==='GET'){
     const offset=Number(url.searchParams.get('offset') || 0);if(!Number.isSafeInteger(offset) || offset<0 || offset>100000)fail('Invalid page.');
-    const state=await readLikes(env,likeKey(file),id);return response({count:state.count,liked:state.liked});
+    const state=await readLikes(env,likeKey(file),id);
+    return response({count:state.count,liked:state.liked});
    }
    if(request.method!=='POST')return response({error:'Not found.'},404);
    const input=await parse(request);if(typeof input.liked!=='boolean')fail('Choose Like or Unlike.');

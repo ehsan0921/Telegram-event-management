@@ -230,11 +230,15 @@ for(const status of ['partial','unconfirmed','failed','cancelled'])test(`Mini Ap
   assert.ok(!f.notices.includes('sent'));assert.equal(f.calls.filter(([path])=>path.endsWith('/send')).length,1);assert.equal(f.calls.filter(([path])=>path.includes('/delivery-status?')).length,0);
 });
 
-test('photo Like updates only after server confirmation, is idempotent while pending, and exposes a noninteractive count without any liker list',async t=>{
+test('photo heart updates only after confirmation; repeated taps do not duplicate and count is noninteractive',async t=>{
  const pending=deferred(),file={id:'111111111111',type:'photo',filename:'photo',canLike:true,likeCount:2,liked:false,canLink:false};
- const f=galleryHarness(t,async(path,input)=>{if(path.endsWith('/likes'))return pending.promise;return {title:'Fictional album',socialFeatures:true,media:[file]};});
- await f.openGallery('0123456789abcdef');const like=f.all().find(n=>n.tagName==='BUTTON' && n.attributes['aria-label']==='Like photo');assert.equal(like.attributes['aria-pressed'],'false');const clicked=like.onclick();assert.equal(like.disabled,true);assert.equal(like.attributes['aria-pressed'],'false');await like.onclick();assert.equal(f.calls.filter(([path])=>path.endsWith('/likes')).length,1);
+ const f=galleryHarness(t,async(path)=>{if(path.endsWith('/likes'))return pending.promise;return {title:'Fictional album',socialFeatures:true,media:[file]};});
+ await f.openGallery('0123456789abcdef');const like=f.all().find(n=>n.tagName==='BUTTON' && n.attributes['aria-label']==='Like photo');assert.equal(like.textContent,'\u2661');assert.equal(like.type,'button');assert.equal(like.attributes['aria-pressed'],'false');const clicked=like.onclick();assert.equal(like.disabled,true);assert.equal(like.attributes['aria-pressed'],'false');await like.onclick();assert.equal(f.calls.filter(([path])=>path.endsWith('/likes')).length,1);
  pending.resolve({liked:true,count:3});await clicked;assert.equal(like.attributes['aria-pressed'],'true');assert.equal(like.disabled,false);assert.equal(like.textContent,'\u2665');assert.equal(like.attributes['aria-label'],'Unlike photo');const count=f.all().find(n=>n.tagName==='SPAN' && n.textContent==='3 likes');assert.ok(count);assert.equal(count.onclick,undefined);assert.equal(count.attributes.tabindex,undefined);assert.ok(!f.calls.some(([path])=>path.includes('/likes?')));f.dismissPendingMedia();assert.equal(document.body.children.length,0);
+});
+
+test('heart errors preserve confirmed count and state, and unlike reveals no identities',async t=>{
+ let denied=true;const f=galleryHarness(t,async(path,input)=>{if(path.endsWith('/likes')){assert.equal(input.liked,false);if(denied)throw Error('Fictional update denied');return {liked:false,count:9};}return {title:'Fictional',socialFeatures:true,media:[{id:'111111111111',type:'photo',filename:'photo',canLike:true,canLink:false,liked:true,likeCount:10}]};});await f.openGallery('0123456789abcdef');const heart=f.all().find(n=>n.attributes['aria-label']==='Unlike photo');await heart.onclick();assert.equal(heart.textContent,'\u2665');assert.equal(heart.attributes['aria-pressed'],'true');assert.ok(f.all().some(n=>n.tagName==='SPAN' && n.textContent==='10 likes'));assert.ok(f.notices.includes('Fictional update denied'));denied=false;await heart.onclick();assert.equal(heart.textContent,'\u2661');assert.equal(heart.attributes['aria-pressed'],'false');assert.ok(f.all().some(n=>n.tagName==='SPAN' && n.textContent==='9 likes'));assert.equal(document.body.children.length,0);
 });
 
 test('personal-album controls disable unauthorized imports and expose removable unavailable references only to owners',async t=>{
